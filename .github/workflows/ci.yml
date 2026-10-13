@@ -31,3 +31,13 @@ jobs:
       # a copy of the one in the Coxia repository.
       - name: Public audit
         run: node scripts/public-audit.mjs
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # No test reaches a real provider, a real machine or the network.
+      - name: Test
+        run: npm test
