@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { createFakeProvider } from '../src/fakeProvider.ts';
@@ -10,7 +11,8 @@ import { isProviderError, ProviderError } from '../src/provider.ts';
 import type { CreateServerInput, VpsProvider } from '../src/provider.ts';
 import { memorySecrets } from './helpers.ts';
 
-const TOKEN = 'tok-guard-7c41e0b9d2a8';
+// Made at run time: a literal token, even a fake one, trips secret scanners.
+const TOKEN = `tok-guard-${randomBytes(6).toString('hex')}`;
 const KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTests test@example.com';
 
 const input = (over: Partial<CreateServerInput> = {}): CreateServerInput => ({ name: 'core-1', region: 'fsn', size: 's-small', image: 'ubuntu-24.04', sshKeys: [KEY], userData: '#cloud-config\n', labels: {}, ...over });
