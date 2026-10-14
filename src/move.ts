@@ -588,7 +588,8 @@ const STEPS: Record<MoveStep, (ctx: Context) => Promise<StepOut>> = {
       if (owner.exitCode === 0) {
         let role: unknown;
         try {
-          role = (JSON.parse(owner.stdout.trim().split('\n').filter(Boolean).pop() ?? '') as { role?: unknown }).role;
+          // `coxia-server call` prints the value as indented JSON over several lines.
+          role = (JSON.parse(owner.stdout) as { role?: unknown }).role;
         } catch {
           role = undefined;
         }

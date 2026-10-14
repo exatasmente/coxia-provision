@@ -120,7 +120,7 @@ export async function makeWorld(opts: { recoveryCopyFile?: boolean; destroyOnFai
     }
     if (cmd.startsWith('sudo -n coxia-server import ')) return ok('{"imported":"principal","repos":[],"health":"ok"}\n');
     if (cmd === 'coxia-server status') return ok('running');
-    if (cmd.startsWith('coxia-server call principal ownership:status')) return ok('{"role":"owner"}\n');
+    if (cmd.startsWith('coxia-server call principal ownership:status')) return ok(JSON.stringify({ role: 'owner', self: 'i2' }, null, 2) + '\n');
     if (cmd === 'sudo -n systemctl stop coxia') return ok();
     if (cmd.startsWith('rm -f ')) return ok();
     return fail(127, `unexpected: ${cmd}`);
