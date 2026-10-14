@@ -1,7 +1,7 @@
 // An in-memory provider with deterministic ids, prices and clock. It stands in for a vendor in the tests of this package and of the move. It reads its token through the
 // secret resolver on every call, like a real adapter, so the redaction and the unauthorized path are exercised for real.
 
-import type { Billing, BillingItem, CreateServerInput, Money, Region, Server, Size, VpsProvider } from './provider.ts';
+import type { Billing, BillingItem, Capabilities, CreateServerInput, Money, Price, Region, Server, Size, VpsProvider } from './provider.ts';
 import { ProviderError } from './provider.ts';
 import type { ProviderErrorCode } from './provider.ts';
 import type { SecretResolver } from './ports.ts';
@@ -20,6 +20,8 @@ export const FAKE_SIZES: Size[] = [
 export const FAKE_IMAGES = ['ubuntu-24.04', 'debian-12'];
 export const FAKE_EPOCH = '2026-01-01T00:00:00.000Z';
 
+export const FAKE_CAPABILITIES: Capabilities = { destroy: 'api', resize: true, bootstrap: 'cloud-init', billing: 'invoices', snapshots: 0, labels: true };
+
 export interface FakeOptions {
   secrets: SecretResolver;
   /** The reference the fake reads its token from, and the value it accepts. */
@@ -27,6 +29,8 @@ export interface FakeOptions {
   token: string;
   now?: () => Date;
   maxServers?: number;
+  /** Overrides for what the fake claims it can do; the fake then refuses what it no longer claims, as a real adapter must. */
+  capabilities?: Partial<Capabilities>;
   /** What the vendor really charges for a created or resized server, when it is not the listed price. */
   charge?: (listed: Money) => Money;
 }
@@ -49,6 +53,7 @@ export interface FakeProvider extends VpsProvider {
 export function createFakeProvider(opts: FakeOptions): FakeProvider {
   const now = opts.now ?? (() => new Date(FAKE_EPOCH));
   const maxServers = opts.maxServers ?? 10;
+  const capabilities: Capabilities = { ...FAKE_CAPABILITIES, ...opts.capabilities };
   const stored = new Map<string, Stored>();
   const calls: { op: string; args: unknown[] }[] = [];
   let seq = 0;
@@ -82,11 +87,14 @@ export function createFakeProvider(opts: FakeOptions): FakeProvider {
   const validate = (input: CreateServerInput): void => {
     if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(input.name)) throw new ProviderError('invalid-input', 'the name must be lowercase letters, digits and dashes');
     if (!input.sshKeys.length || input.sshKeys.some((k) => !/^ssh-\S+ \S+/.test(k))) throw new ProviderError('invalid-input', 'at least one valid ssh public key is required');
+    if (input.bootstrap && input.bootstrap.kind !== capabilities.bootstrap) throw new ProviderError('invalid-input', `this provider takes a ${capabilities.bootstrap} bootstrap, not ${input.bootstrap.kind}`);
+    if (!capabilities.labels && Object.keys(input.labels ?? {}).length) throw new ProviderError('invalid-input', 'this provider cannot label servers');
     if (!FAKE_IMAGES.includes(input.image)) throw new ProviderError('invalid-input', `unknown image ${input.image}`);
     listed(input.size, input.region);
   };
 
   return {
+    capabilities,
     calls,
     failNext: (code, leak) => {
       pending = leak === undefined ? { code } : { code, leak };
@@ -128,6 +136,7 @@ export function createFakeProvider(opts: FakeOptions): FakeProvider {
 
     async resizeServer(id, size) {
       await enter('resizeServer', [id, size]);
+      if (!capabilities.resize) throw new ProviderError('unsupported', 'this provider cannot resize a server');
       const s = live(id);
       s.server = { ...s.server, size, monthly: charged(size, s.server.region) };
       return structuredClone(s.server);
@@ -135,8 +144,12 @@ export function createFakeProvider(opts: FakeOptions): FakeProvider {
 
     async destroyServer(id) {
       await enter('destroyServer', [id]);
+      if (capabilities.destroy === 'none') throw new ProviderError('unsupported', 'this provider has no way to end a server');
       const s = stored.get(id);
-      if (s && !s.destroyedAt) s.destroyedAt = now().toISOString();
+      if (!s || s.destroyedAt) return;
+      // End of term: the server stays, listed and billed, and only says when it goes.
+      if (capabilities.destroy === 'end-of-term') s.server.endsAt ??= new Date(now().getTime() + 30 * 86_400_000).toISOString();
+      else s.destroyedAt = now().toISOString();
     },
 
     async holdsData(id) {
@@ -154,7 +167,7 @@ export function createFakeProvider(opts: FakeOptions): FakeProvider {
       return structuredClone(FAKE_SIZES);
     },
 
-    async priceOf(size, region) {
+    async priceOf(size, region): Promise<Price> {
       await enter('priceOf', [size, region]);
       return listed(size, region);
     },

@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, test } from 'node:test';
 import { isProviderError, PROVIDER_ERROR_CODES } from '../src/provider.ts';
-import type { ProviderErrorCode, Server, Size, VpsProvider } from '../src/provider.ts';
+import type { Bootstrap, ProviderErrorCode, Server, Size, VpsProvider } from '../src/provider.ts';
 
 export interface ContractSubject {
   provider: VpsProvider;
@@ -20,9 +20,14 @@ export interface ContractSubject {
   period: { from: string; to: string };
   /** Makes the next call fail as the vendor would for `code`, echoing `leak` in the vendor's own words. Without it the coded-failure checks are skipped. */
   failNext?: (code: ProviderErrorCode, leak: string) => void;
+  /** The codes `failNext` can produce; every code but `unauthorized` when absent. An adapter maps only the statuses its vendor documents, so it lists those. */
+  failCodes?: readonly ProviderErrorCode[];
 }
 
 export type ContractFactory = () => ContractSubject | Promise<ContractSubject>;
+
+const bootstrapFor = (p: VpsProvider): Bootstrap => (p.capabilities.bootstrap === 'cloud-init' ? { kind: 'cloud-init', userData: '#cloud-config\n' } : { kind: 'script', script: '#!/bin/sh\ntrue\n' });
+const otherBootstrap = (p: VpsProvider): Bootstrap => (p.capabilities.bootstrap === 'cloud-init' ? { kind: 'script', script: '#!/bin/sh\ntrue\n' } : { kind: 'cloud-init', userData: '#cloud-config\n' });
 
 const shown = (e: unknown): string => {
   const parts: string[] = [];
@@ -68,7 +73,7 @@ export function runProviderContract(name: string, makeProvider: ContractFactory)
       const small = sizes[0]!;
       const large = sizes.at(-1)!;
       const create = async (n: string, extra: Partial<{ size: string; labels: Record<string, string> }> = {}): Promise<Server> => {
-        const server = await s.provider.createServer({ name: n, region, size: extra.size ?? small.id, image: s.image, sshKeys: [s.sshKey], userData: '#cloud-config\n', labels: extra.labels ?? {} });
+        const server = await s.provider.createServer({ name: n, region, size: extra.size ?? small.id, image: s.image, sshKeys: [s.sshKey], bootstrap: bootstrapFor(s.provider), labels: s.provider.capabilities.labels ? (extra.labels ?? {}) : {} });
         ctx.ids.push(server.id);
         return server;
       };
@@ -77,6 +82,17 @@ export function runProviderContract(name: string, makeProvider: ContractFactory)
 
     afterEach(async () => {
       for (const { subject, ids } of made.splice(0)) for (const id of ids) await subject.provider.destroyServer(id).catch(() => undefined);
+    });
+
+    test('capabilities are declared in full', async () => {
+      const { s } = await open();
+      const c = s.provider.capabilities;
+      assert.ok(['api', 'end-of-term', 'none'].includes(c.destroy));
+      assert.ok(['cloud-init', 'script'].includes(c.bootstrap));
+      assert.ok(['invoices', 'subscriptions'].includes(c.billing));
+      assert.equal(typeof c.resize, 'boolean');
+      assert.equal(typeof c.labels, 'boolean');
+      assert.ok(Number.isInteger(c.snapshots) && c.snapshots >= 0);
     });
 
     test('regions and sizes carry a price per month', async () => {
@@ -97,6 +113,10 @@ export function runProviderContract(name: string, makeProvider: ContractFactory)
       const price = await s.provider.priceOf(small.id, region);
       assert.equal(price.amount, small.regionPrices?.[region]?.amount ?? small.monthly.amount);
       assert.match(price.currency, /^[A-Z]{3}$/);
+      if (price.upfront !== undefined) {
+        assert.ok(Number.isFinite(price.upfront) && price.upfront >= 0, 'a finite upfront charge');
+        assert.ok(Number.isInteger(price.termMonths) && price.termMonths! >= 1, 'an upfront charge says its term');
+      }
       await expectCode(s.provider.priceOf('no-such-size', region), 'invalid-input');
       await expectCode(s.provider.priceOf(small.id, 'no-such-region'), 'invalid-input');
     });
@@ -108,7 +128,7 @@ export function runProviderContract(name: string, makeProvider: ContractFactory)
       assert.equal(server.name, 'contract-a');
       assert.equal(server.region, region);
       assert.equal(server.size, small.id);
-      assert.equal(server.labels.role, 'core');
+      if (s.provider.capabilities.labels) assert.equal(server.labels.role, 'core');
       assert.ok(Number.isFinite(server.monthly.amount));
       assert.ok(Date.parse(server.createdAt) > 0);
       assert.ok((await s.provider.listServers()).some((x) => x.id === server.id));
@@ -127,8 +147,26 @@ export function runProviderContract(name: string, makeProvider: ContractFactory)
       assert.equal((await s.provider.listServers()).some((x) => x.name === 'contract-bad'), false);
     });
 
+    test('a bootstrap of the kind the provider does not take is refused, and the kind it takes is accepted', async () => {
+      const { s, region, small, create } = await open();
+      await expectCode(s.provider.createServer({ name: 'contract-bs', region, size: small.id, image: s.image, sshKeys: [s.sshKey], bootstrap: otherBootstrap(s.provider) }), 'invalid-input');
+      assert.equal((await s.provider.listServers()).some((x) => x.name === 'contract-bs'), false);
+      await create('contract-bs-ok');
+    });
+
+    test('labels are refused when the provider cannot keep them', async (t) => {
+      const { s, region, small } = await open();
+      if (s.provider.capabilities.labels) return t.skip('the provider keeps labels');
+      await expectCode(s.provider.createServer({ name: 'contract-lb', region, size: small.id, image: s.image, sshKeys: [s.sshKey], labels: { role: 'core' } }), 'invalid-input');
+    });
+
     test('resize changes the size and the price, and refuses a missing server or an unknown size', async () => {
       const { s, small, large, create } = await open();
+      if (!s.provider.capabilities.resize) {
+        const server = await create('contract-r');
+        await expectCode(s.provider.resizeServer(server.id, large.id), 'unsupported');
+        return;
+      }
       if (large.id === small.id) return;
       const server = await create('contract-r');
       const bigger = await s.provider.resizeServer(server.id, large.id);
@@ -152,12 +190,25 @@ export function runProviderContract(name: string, makeProvider: ContractFactory)
       assert.equal(typeof (await s.provider.holdsData(server.id)), 'boolean');
     });
 
-    test('destroy removes the server, and destroying it again or one that never existed resolves', async () => {
+    test('destroy does what the capability says, and is idempotent', async () => {
       const { s, create } = await open();
       const server = await create('contract-x');
+      const mode = s.provider.capabilities.destroy;
+      if (mode === 'none') {
+        await expectCode(s.provider.destroyServer(server.id), 'unsupported');
+        return;
+      }
       await s.provider.destroyServer(server.id);
-      assert.equal((await s.provider.listServers()).some((x) => x.id === server.id), false);
-      await expectCode(s.provider.getServer(server.id), 'not-found');
+      const after = (await s.provider.listServers()).find((x) => x.id === server.id);
+      if (mode === 'api') {
+        assert.equal(after, undefined);
+        await expectCode(s.provider.getServer(server.id), 'not-found');
+      } else {
+        // End of term: the server is still there, and says when it goes.
+        assert.ok(after, 'the server stays until its term ends');
+        assert.ok(after.endsAt && Date.parse(after.endsAt) > 0, 'and carries the end of its term');
+        assert.equal((await s.provider.getServer(server.id)).endsAt, after.endsAt);
+      }
       await s.provider.destroyServer(server.id);
       await s.provider.destroyServer('no-such-server');
     });
@@ -176,6 +227,11 @@ export function runProviderContract(name: string, makeProvider: ContractFactory)
         sum += Math.round(item.amount * 100);
       }
       assert.equal(Math.round(bill.total * 100), sum);
+      // A provider with no invoices can only estimate, and must say so on every line and on the total.
+      if (s.provider.capabilities.billing === 'subscriptions') {
+        assert.ok(bill.items.length > 0 && bill.items.every((i) => i.estimated === true));
+        assert.equal(bill.estimated, true);
+      }
       await expectCode(s.provider.billing({ from: s.period.to, to: s.period.from }), 'invalid-input');
     });
 
@@ -190,7 +246,7 @@ export function runProviderContract(name: string, makeProvider: ContractFactory)
       const { s } = await open();
       if (!s.failNext) return t.skip('the subject cannot force a vendor failure');
       const leak = 'leaked-credential-for-the-contract';
-      for (const code of PROVIDER_ERROR_CODES.filter((c) => c !== 'unauthorized')) {
+      for (const code of (s.failCodes ?? PROVIDER_ERROR_CODES).filter((c) => c !== 'unauthorized')) {
         s.failNext(code, leak);
         const e = await expectCode(s.provider.listServers(), code);
         assert.ok(!shown(e).includes(s.token), `${code} must not carry the token`);

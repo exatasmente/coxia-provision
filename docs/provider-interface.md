@@ -1,6 +1,6 @@
 # The VPS provider interface
 
-How coxia-provision talks to a hosting vendor, and what it needs from the Coxia core to do so safely. The first real adapter comes after the provider research; this is the
+How coxia-provision talks to a hosting vendor, and what it needs from the Coxia core to do so safely. The first real adapter is Hostinger (`docs/providers/hostinger.md`); this is the
 interface, the contract every adapter must pass, and the fake the tests use.
 
 ## Layers
@@ -18,21 +18,47 @@ interface, the contract every adapter must pass, and the fake the tests use.
 
 ```ts
 interface VpsProvider {
-  createServer(input: { name; region; size; image; sshKeys: string[]; userData?; labels? }): Promise<Server>;
+  readonly capabilities: Capabilities;
+  createServer(input: { name; region; size; image; sshKeys: string[]; bootstrap?: Bootstrap; labels? }): Promise<Server>;
   listServers(): Promise<Server[]>;
   getServer(id): Promise<Server>;                  // not-found
-  resizeServer(id, size): Promise<Server>;         // not-found, invalid-input
-  destroyServer(id): Promise<void>;                // idempotent: a missing server resolves
+  resizeServer(id, size): Promise<Server>;         // unsupported, not-found, invalid-input
+  destroyServer(id): Promise<void>;                // idempotent: a missing server resolves; see destroy capability
   holdsData(id): Promise<boolean>;                 // true when in doubt; not-found
   listRegions(): Promise<Region[]>;
   listSizes(): Promise<Size[]>;                    // monthly price (and per region)
-  priceOf(size, region): Promise<Money>;           // per month; invalid-input
+  priceOf(size, region): Promise<Price>;           // per month, plus upfront and termMonths; invalid-input
   billing({ from, to }): Promise<{ items; total; currency }>;
 }
 ```
 
-Errors are `ProviderError` with a stable `code`: `not-found`, `quota`, `invalid-input`, `provider-unavailable`, `rate-limited`, `unauthorized`. The guard adds `GuardError` with the
+Errors are `ProviderError` with a stable `code`: `not-found`, `quota`, `invalid-input`, `provider-unavailable`, `rate-limited`, `unauthorized`, `unsupported`. The guard adds `GuardError` with the
 core's own codes: `forbidden`, `budget-exceeded`, `passkey-required`, `host-unavailable`. Both are recognised by `name`.
+
+## Capabilities
+
+A vendor does not always do what the interface names. Each adapter declares what it can, and a call outside it fails with `unsupported` (or `invalid-input` for a bootstrap of the wrong
+kind); it never pretends.
+
+| Field | Values | Meaning |
+|---|---|---|
+| `destroy` | `api` / `end-of-term` / `none` | `api`: `destroyServer` deletes now. `end-of-term`: it only stops the renewal; the server keeps running, billed and holding its data, until `Server.endsAt`. `none`: `unsupported`. |
+| `resize` | boolean | False: `resizeServer` throws `unsupported`. |
+| `bootstrap` | `cloud-init` / `script` | The one `Bootstrap` kind the adapter takes (`{kind:'cloud-init', userData}` or `{kind:'script', script}`). Another kind is `invalid-input`. |
+| `billing` | `invoices` / `subscriptions` | `subscriptions`: `billing()` lists subscriptions with their price and term, every item and the total `estimated`. |
+| `snapshots` | number | Snapshots a server can have. |
+| `labels` | boolean | False: non-empty `labels` on create are `invalid-input`. |
+
+`destroyServer` stays one method, also for `end-of-term`, so that the destroy guard, the audit and the passkey rule have one path and cannot be skipped by calling "the other method". The
+honesty is in the capability, in `Server.endsAt` and in the guard's summary and audit text ("end server ... at the end of its term"), which says the server runs until then.
+
+The guard checks the capability itself and refuses before it asks anyone: a bootstrap or labels the provider cannot take, a resize or a destroy it does not have.
+
+## Price and the spend
+
+`priceOf` returns `Price`: `amount` per month, and for a vendor that bills a term at once also `upfront` (the charge now) and `termMonths`. The gate is asked for `upfront` with recurrence
+`once` (else for `amount`, `monthly`), and settles with `Server.upfront` (else `monthly`). `Server.status` can be `pending-payment`: bought, payment not confirmed, no machine yet; that is a
+result, not an error.
 
 An adapter receives a `SecretResolver` and a secret reference, resolves the token on each call and keeps it nowhere. An adapter must not put the token in a message, and the
 contract checks it; the guard checks again, because an SDK's error is not the adapter's to vouch for.
@@ -131,8 +157,8 @@ change either way.
 
 ## Writing an adapter
 
-1. Implement `VpsProvider`; take a `SecretResolver` and a reference, never a token.
+1. Implement `VpsProvider` and declare `capabilities`; take a `SecretResolver` and a reference, never a token.
 2. Map every vendor failure to a `ProviderError` code; do not copy a vendor message that can echo a header.
 3. `holdsData` answers `true` when the vendor cannot say.
 4. Add a test file that calls `runProviderContract('<vendor>', factory)` against a local fake of the vendor's API (no network beyond 127.0.0.1), with a `rejected` subject built from a bad
-   credential. `failNext` is optional and, when given, also checks every error code for leaks.
+   credential. `failNext` is optional and, when given, also checks every error code for leaks (`failCodes` lists the codes it can produce). The contract adapts to the capabilities.
