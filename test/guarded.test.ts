@@ -8,18 +8,18 @@ import type { GuardedProvider } from '../src/guarded.ts';
 import { GuardError } from '../src/ports.ts';
 import type { AccountCheck, ActualSpend, AuditEntry, DestroyDecision, DestroyGuard, DestroyRequest, SpendDecision, SpendGate, SpendRequest } from '../src/ports.ts';
 import { isProviderError, ProviderError } from '../src/provider.ts';
-import type { CreateServerInput, VpsProvider } from '../src/provider.ts';
+import type { Capabilities, CreateServerInput, VpsProvider } from '../src/provider.ts';
 import { memorySecrets } from './helpers.ts';
 
 // Made at run time: a literal token, even a fake one, trips secret scanners.
 const TOKEN = `tok-guard-${randomBytes(6).toString('hex')}`;
 const KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTests test@example.com';
 
-const input = (over: Partial<CreateServerInput> = {}): CreateServerInput => ({ name: 'core-1', region: 'fsn', size: 's-small', image: 'ubuntu-24.04', sshKeys: [KEY], userData: '#cloud-config\n', labels: {}, ...over });
+const input = (over: Partial<CreateServerInput> = {}): CreateServerInput => ({ name: 'core-1', region: 'fsn', size: 's-small', image: 'ubuntu-24.04', sshKeys: [KEY], bootstrap: { kind: 'cloud-init', userData: '#cloud-config\n' }, labels: {}, ...over });
 
-function setup(opts: { spend?: (r: SpendRequest) => SpendDecision; destroy?: (r: DestroyRequest) => DestroyDecision; registered?: boolean; charge?: (m: { amount: number; currency: string }) => { amount: number; currency: string }; wrap?: (p: FakeProvider) => VpsProvider; settleFails?: boolean } = {}) {
+function setup(opts: { spend?: (r: SpendRequest) => SpendDecision; destroy?: (r: DestroyRequest) => DestroyDecision; registered?: boolean; charge?: (m: { amount: number; currency: string }) => { amount: number; currency: string }; wrap?: (p: FakeProvider) => VpsProvider; settleFails?: boolean; caps?: Partial<Capabilities> } = {}) {
   const secrets = memorySecrets({ 'prov-token': TOKEN });
-  const fake = createFakeProvider({ secrets, tokenRef: 'prov-token', token: TOKEN, ...(opts.charge ? { charge: opts.charge } : {}) });
+  const fake = createFakeProvider({ secrets, tokenRef: 'prov-token', token: TOKEN, ...(opts.caps ? { capabilities: opts.caps } : {}), ...(opts.charge ? { charge: opts.charge } : {}) });
   const authorized: SpendRequest[] = [];
   const settled: { ticket: string; actual: ActualSpend }[] = [];
   const destroyAsked: DestroyRequest[] = [];
@@ -268,5 +268,60 @@ describe('secrets', () => {
     const e = await thrown(t.guarded.listServers());
     assert.equal((e as ProviderError).code, 'rate-limited');
     assert.ok(!chain(e).includes(TOKEN));
+  });
+});
+
+describe('capabilities', () => {
+  test('a term billed up front is what the gate is asked, once, and what settles', async () => {
+    const t = setup({
+      wrap: (fake) => ({
+        ...fake,
+        priceOf: async () => ({ amount: 9, currency: 'USD', upfront: 54, termMonths: 6 }),
+        createServer: async (i) => ({ ...(await fake.createServer(i)), upfront: { amount: 54, currency: 'USD' } }),
+      }),
+    });
+    await t.guarded.createServer(input());
+    assert.equal(t.authorized[0]!.amount, 54);
+    assert.equal(t.authorized[0]!.recurrence, 'once');
+    assert.match(t.authorized[0]!.summary, /6-month term paid up front/);
+    assert.deepEqual(t.settled[0]!.actual, { amount: 54, currency: 'USD' });
+    assert.equal(t.audit[0]!.amount, 54);
+  });
+
+  test('a bootstrap of the wrong kind is refused before anyone is asked for money', async () => {
+    const t = setup();
+    const e = await thrown(t.guarded.createServer(input({ bootstrap: { kind: 'script', script: '#!/bin/sh\n' } })));
+    assert.equal((e as ProviderError).code, 'invalid-input');
+    assert.deepEqual(t.authorized, []);
+    assert.equal(createdOn(t.fake), 0);
+  });
+
+  test('a provider that cannot resize is unsupported, and nothing is priced or asked', async () => {
+    const t = setup({ caps: { resize: false } });
+    const server = await t.guarded.createServer(input());
+    t.authorized.length = 0;
+    const e = await thrown(t.guarded.resizeServer(server.id, 's-large'));
+    assert.equal((e as ProviderError).code, 'unsupported');
+    assert.deepEqual(t.authorized, []);
+    assert.equal(t.guarded.capabilities.resize, false);
+  });
+
+  test('a provider with no way to end a server is unsupported, without a passkey prompt', async () => {
+    const t = setup({ caps: { destroy: 'none' } });
+    const server = await t.guarded.createServer(input());
+    const e = await thrown(t.guarded.destroyServer(server.id));
+    assert.equal((e as ProviderError).code, 'unsupported');
+    assert.deepEqual(t.destroyAsked, []);
+  });
+
+  test('ending at the term still goes through the destroy guard, and is called what it is', async () => {
+    const t = setup({ caps: { destroy: 'end-of-term' }, destroy: () => ({ ok: true, allowedBy: 'person', ticket: 'd1' }) });
+    const server = await t.guarded.createServer(input());
+    t.fake.setHoldsData(server.id, true);
+    await t.guarded.destroyServer(server.id);
+    assert.equal(t.destroyAsked.length, 1);
+    assert.match(t.destroyAsked[0]!.summary, /end of its term/);
+    assert.deepEqual(t.closed, [{ ticket: 'd1', outcome: 'done' }]);
+    assert.ok((await t.guarded.getServer(server.id)).endsAt);
   });
 });

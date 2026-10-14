@@ -1,7 +1,7 @@
 // The surface the rest of coxia-provision uses: any `VpsProvider` behind the budget, the autonomy grant, the account registry, the destroy guard and the redactor.
 // Nothing here knows a vendor. Fail closed: a port that cannot decide is a refusal, and a purchase is never retried.
 
-import type { Billing, CreateServerInput, Money, Region, Server, Size, VpsProvider } from './provider.ts';
+import type { Billing, Capabilities, CreateServerInput, Money, Price, Region, Server, Size, VpsProvider } from './provider.ts';
 import { ProviderError } from './provider.ts';
 import { GuardError, isGuardErrorCode } from './ports.ts';
 import type { AccountCheck, AccountInfo, AllowedBy, AuditEntry, AuditSink, DestroyGuard, Refusal, SecretResolver, SpendGate } from './ports.ts';
@@ -22,6 +22,7 @@ export interface GuardedOptions {
 
 export interface GuardedProvider {
   readonly name: string;
+  readonly capabilities: Capabilities;
   createServer(input: CreateServerInput): Promise<Server>;
   listServers(): Promise<Server[]>;
   getServer(id: string): Promise<Server>;
@@ -30,12 +31,13 @@ export interface GuardedProvider {
   holdsData(id: string): Promise<boolean>;
   listRegions(): Promise<Region[]>;
   listSizes(): Promise<Size[]>;
-  priceOf(size: string, region: string): Promise<Money>;
+  priceOf(size: string, region: string): Promise<Price>;
   billing(period: { from: string; to: string }): Promise<Billing>;
 }
 
 const CATEGORY = 'infrastructure';
 const cents = (n: number): number => Math.round(n * 100) / 100;
+const unsupported = (what: string): ProviderError => new ProviderError('unsupported', `this provider cannot ${what}`);
 
 export function guardProvider(provider: VpsProvider, opts: GuardedOptions): GuardedProvider {
   const { name, gate, destroyGuard, accounts, secrets, audit } = opts;
@@ -89,13 +91,20 @@ export function guardProvider(provider: VpsProvider, opts: GuardedOptions): Guar
 
   return {
     name,
+    capabilities: provider.capabilities,
 
     createServer: (input) =>
       scoped(async (account) => {
+        // Refused before anyone is asked to approve money for something the provider would turn down.
+        if (input.bootstrap && input.bootstrap.kind !== provider.capabilities.bootstrap) throw new ProviderError('invalid-input', `this provider takes a ${provider.capabilities.bootstrap} bootstrap, not ${input.bootstrap.kind}`);
+        if (!provider.capabilities.labels && Object.keys(input.labels ?? {}).length) throw new ProviderError('invalid-input', 'this provider cannot label servers');
         const price = await provider.priceOf(input.size, input.region);
-        const summary = `create server ${input.name} (${input.size} in ${input.region})`;
-        const base = { accountId: account.id, target: input.name, summary, amount: price.amount, currency: price.currency } as const;
-        const decision = await gate.authorize({ kind: 'spend', category: CATEGORY, accountId: account.id, amount: price.amount, currency: price.currency, recurrence: 'monthly', summary }).catch((e: unknown) => {
+        // A term billed up front is one charge now; the gate is asked for that, not for a month of it.
+        const due = price.upfront ?? price.amount;
+        const term = price.upfront !== undefined && price.termMonths ? `, ${price.termMonths}-month term paid up front` : '';
+        const summary = `create server ${input.name} (${input.size} in ${input.region}${term})`;
+        const base = { accountId: account.id, target: input.name, summary, amount: due, currency: price.currency } as const;
+        const decision = await gate.authorize({ kind: 'spend', category: CATEGORY, accountId: account.id, amount: due, currency: price.currency, recurrence: price.upfront !== undefined ? 'once' : 'monthly', summary }).catch((e: unknown) => {
           throw new GuardError('host-unavailable', 'the spend could not be checked', { cause: e });
         });
         if (!decision.ok) {
@@ -110,11 +119,12 @@ export function guardProvider(provider: VpsProvider, opts: GuardedOptions): Guar
           await note(account, { op: 'create-server', result: 'failed', code: (e as { code?: string }).code, allowedBy: decision.allowedBy, ...base });
           throw e;
         }
-        const settleError = await gate.settle(decision.ticket, { amount: server.monthly.amount, currency: server.monthly.currency }).then(
+        const charged = server.upfront ?? server.monthly;
+        const settleError = await gate.settle(decision.ticket, { amount: charged.amount, currency: charged.currency }).then(
           () => undefined,
           (e: unknown) => (e instanceof Error ? e.message : 'settle failed'),
         );
-        await note(account, { op: 'create-server', result: 'done', allowedBy: decision.allowedBy, ...base, amount: server.monthly.amount, currency: server.monthly.currency, target: server.id, ...(settleError ? { settleError } : {}) });
+        await note(account, { op: 'create-server', result: 'done', allowedBy: decision.allowedBy, ...base, amount: charged.amount, currency: charged.currency, target: server.id, ...(settleError ? { settleError } : {}) });
         return server;
       }),
 
@@ -128,6 +138,7 @@ export function guardProvider(provider: VpsProvider, opts: GuardedOptions): Guar
 
     resizeServer: (id, size) =>
       scoped(async (account) => {
+        if (!provider.capabilities.resize) throw unsupported('resize a server');
         const before = await provider.getServer(id);
         const next = await provider.priceOf(size, before.region);
         if (next.currency !== before.monthly.currency) throw new ProviderError('invalid-input', 'the new size is priced in another currency');
@@ -168,7 +179,9 @@ export function guardProvider(provider: VpsProvider, opts: GuardedOptions): Guar
 
     destroyServer: (id) =>
       scoped(async (account) => {
-        const base = { accountId: account.id, target: id, summary: `destroy server ${id}` } as const;
+        if (provider.capabilities.destroy === 'none') throw unsupported('end a server');
+        // Said as it is: an end-of-term "destroy" leaves the server running and billed until the term ends.
+        const base = { accountId: account.id, target: id, summary: provider.capabilities.destroy === 'end-of-term' ? `end server ${id} at the end of its term (renewal off, the server runs until then)` : `destroy server ${id}` } as const;
         let holds: boolean;
         try {
           holds = await provider.holdsData(id);
