@@ -127,8 +127,13 @@ export function renderCloudInit(input: CloudInitInput): string {
   const out = [
     '#cloud-config',
     '# Rendered by coxia-provision. Holds public keys and settings only; no secret belongs here.',
+    // Ubuntu already has a group named `admin`, and creating the user with a group of its own name then fails. Declaring the group makes
+    // cloud-init create it where it is missing and skip it where it exists; the user then takes it as its primary group.
+    'groups:',
+    `  - ${q(user)}`,
     'users:',
     `  - name: ${q(user)}`,
+    `    primary_group: ${q(user)}`,
     '    groups: [sudo]',
     '    shell: /bin/bash',
     '    lock_passwd: true',

@@ -25,6 +25,15 @@ test('the output is a cloud-config with the user, the key, the pinned ref and th
   assert.match(out, new RegExp(`^ {2}- \\["${PROVISION_PATH}", "provision"\\]$`, 'm'));
 });
 
+test('the admin group is declared and is the primary group, so a group of that name already on the image does not fail the user', () => {
+  const out = renderCloudInit(base);
+  assert.match(out, /^groups:\n {2}- "admin"\nusers:$/m);
+  assert.match(out, /^ {4}primary_group: "admin"$/m);
+  const custom = renderCloudInit({ ...base, adminUser: 'ops' });
+  assert.match(custom, /^groups:\n {2}- "ops"\nusers:$/m);
+  assert.match(custom, /^ {4}primary_group: "ops"$/m);
+});
+
 test('rendering is deterministic', () => {
   assert.equal(renderCloudInit(base), renderCloudInit({ ...base }));
 });
