@@ -18,7 +18,7 @@ provision.sh does not copy install.sh. It fetches coxia-server at the pinned ref
 
 `CloudInitInput`: the admin public key(s), the coxia-server ref, the contents of `deploy/provision.sh` at that same commit, the timezone, an optional swap size in MB, and optionally the admin user (default `admin`), the coxia-server repository URL and the Coxia release (`COXIA_REF`). Every value is validated to a narrow shape before it reaches YAML, a git command line or a shell word, and values are written as JSON strings so none can break out of its line. **Pin the server ref to a full commit id**: a tag or branch is only as fixed as the remote keeps it.
 
-The script travels inside the user-data (`write_files`, `gz+b64`), so nothing is fetched to start and no private repository has to be reachable for that. The server checkout still comes from `serverRepoUrl`; while coxia-server is private that URL needs credentials or a different delivery (an open decision, see below).
+The script travels inside the user-data (`write_files`, `gz+b64`), so nothing is fetched to start and no private repository has to be reachable for that. The server checkout still comes from `serverRepoUrl`; the one-line install and the post-install script fetch coxia-server anonymously, which needs both repositories public (an open decision for cloud-init until then, see below).
 
 ## Decisions
 
@@ -27,6 +27,32 @@ The script travels inside the user-data (`write_files`, `gz+b64`), so nothing is
 - **Unattended upgrades on, automatic reboot off.** Security updates install by themselves; a reboot at an hour nobody chose would cut running agents, so `/var/run/reboot-required` is the cue for the person.
 - **Idempotent.** Each step converges: files are rewritten only when different, ufw rules and apt packages are no-ops the second time, the swap file is recreated only when its size differs, the checkout is forced to the ref, and install.sh never regenerates the master key or touches the data folder. A second run does restart the service (install.sh does) and rebuilds nothing already built.
 - **The "SSH key the clients use".** Read as the machine's SSH host key: `ssh-keygen -A` makes sure it exists and the script reports its SHA256 fingerprints (`coxia-provision host-keys`, `HostKeyFingerprint[]` in the result) so the desktop can trust the machine by comparison. A key pair for logging in is made on the person's side and only its public half is given as input; a private key made on the machine would have to leave it. Fingerprints read over the first SSH connection are trust on first use; if the provider shows the host key in its console output, compare with that.
+
+## The one-line install
+
+[`install.sh`](../install.sh) at the repository root is the entry point for `curl | sudo bash` (options in the [README](../README.md)). It adds nothing to the provisioning itself: it checks root and Ubuntu 24.04, checks the lockout guard, fetches this repository at `--ref` (git `init` + `fetch --depth 1`, so a tag, a branch or a full commit id all work; a tarball's checksum would have to be written inside the very tarball it checks, whereas a commit id is a hash git itself verifies), writes `/etc/coxia-provision.env` with the same lines `renderCloudInit()` writes, copies `deploy/provision.sh` to `/usr/local/sbin/coxia-provision` and runs `provision` and `next-steps`. Git is told never to prompt (`GIT_TERMINAL_PROMPT=0`), so no step can wait on or assume a credential.
+
+What the three ways in share, all in `deploy/provision.sh`: the admin user is created from `/etc/coxia-provision.admin-keys` (public keys, one per line; a user with no password, `NOPASSWD` sudo through `/etc/sudoers.d`, keys only ever added to `authorized_keys`), the timezone from `TIMEZONE`, and `HARDEN=0` skips sshd and the firewall. cloud-init still creates its user in the `users:` block (it must exist before the first ssh connection) and does not write the keys file; the post-install script (`renderPostInstallScript()`) and install.sh write it. A user that already exists keeps its password; it only gains the keys and the sudo entry.
+
+**Lockout guard.** Hardening leaves the admin user's key as the only way in. install.sh refuses, before installing or touching anything, when hardening is on and no `--admin-key` is given and the admin user has no non-empty `authorized_keys`; provision.sh checks the same again before it writes the sshd drop-in. `--no-harden` is the way out, with a warning.
+
+**Idempotent.** The env and key files are rewritten only when different, the checkout is forced to the ref, and everything after that is `provision`'s own convergence (above). A second run changes no file.
+
+### curl | bash: threat notes
+
+- **Pin a tag.** A branch moves; a script fetched from `main` runs as root with whatever `main` holds today. Take `install.sh` from a release tag URL: the copy there has that tag stamped in (`scripts/stamp-release.sh`), so the script and the code it fetches are the same release. From a branch the script says its ref is not pinned. For a harder pin, pass `--ref <full commit id>` and `--server-ref <full commit id>`; both are checked against what git resolved.
+- **Verify before running.** Download, read, then run the file you read:
+
+  ```bash
+  curl -fsSLo install.sh https://raw.githubusercontent.com/exatasmente/coxia-provision/<tag>/install.sh
+  less install.sh
+  sha256sum install.sh        # compare with the checksum the release notes carry
+  sudo bash install.sh --server-ref <ref> --admin-key "$(cat ~/.ssh/id_ed25519.pub)"
+  ```
+
+  The checksum has to come from somewhere other than the same URL to mean anything (the release notes, another machine). Git tags can be moved by whoever owns the repository; a commit id cannot.
+- **Partial download.** If the connection drops, `bash` would run the part that arrived. Every command of `install.sh` lives inside `main`, and the file's last line calls `main` with an end marker argument that `main` insists on. A cut file is either a syntax error (the function never closes) or a call without the marker, and in both cases nothing runs; a test cuts the file at every line and every byte of the last line. The script also gives its children no standard input, so nothing they read can swallow the rest of the script.
+- **What it trusts.** raw.githubusercontent.com and github.com over TLS, and the two repositories' owners. `install.sh` itself fetches nothing else (a test fails if it calls `curl`); `provision.sh` and coxia-server's `install.sh` fetch Node (checked against its published checksum), apt packages and the Coxia core.
 
 ## Threat notes
 
@@ -44,8 +70,8 @@ The marker comes before the key so a broken transfer cannot offer the key twice;
 
 ## Tests
 
-`node --test "test/*.test.ts"`, no network and no machine: cloud-init rendering (header, pinned ref, no secret, the embedded script equals provision.sh, the sshd lines agree with the script, bad input refused), `provisionMachine` against a fake `SshRunner` (order, retries, errors, once-only recovery copy), and provision.sh in its sandbox mode, where `COXIA_PROVISION_SANDBOX=1` points `host-keys` and `recovery-copy` at a throwaway folder and `provision` refuses to run. `shellcheck deploy/provision.sh` runs in CI.
+`node --test "test/*.test.ts"`, no network and no machine: cloud-init rendering (header, pinned ref, no secret, the embedded script equals provision.sh, the sshd lines agree with the script, bad input refused), `provisionMachine` against a fake `SshRunner` (order, retries, errors, once-only recovery copy), and provision.sh in its sandbox mode, where `COXIA_PROVISION_SANDBOX=1` points `host-keys` and `recovery-copy` at a throwaway folder and `provision` refuses to run. `test/install-script.test.ts` runs `install.sh` in a sandbox (a throwaway root, stubbed `git`, `curl`, `apt-get`, `id` and `getent` on `PATH`, an os-release file and a terminal file via `COXIA_INSTALL_SANDBOX=1`): option parsing, the root and OS refusals, the lockout guard, `--no-harden`, the stamped ref, the confirmation, idempotence and truncation. `test/bootstrap.test.ts` covers the post-install renderer (settings, size, no secret). `shellcheck deploy/provision.sh install.sh scripts/stamp-release.sh` runs in CI.
 
 ## Not verified on a real VPS
 
-Nothing here ran on a real machine or against a real provider. Not verified: the full `provision` run (apt, sshd drop-in precedence and `sshd -T` checks on 24.04 with the provider's own `50-cloud-init.conf`, ufw activation, swap on the provider's file system, the `ss` listener check), cloud-init accepting the rendered file (including `gz+b64` and the `users` block replacing the default user), the checkout fetching a commit id from the server repository, coxia-server's `install.sh` end to end, and a real SSH runner (this repository defines the port and the fake; an adapter around `ssh` is the caller's). Open: how coxia-server is delivered while its repository is private, and whether the desktop should compare fingerprints with a provider-reported one.
+Nothing here ran on a real machine or against a real provider. Not verified: `install.sh` on a real VPS (the sandbox stubs git, apt and the machine), `setup_admin` (`useradd`, the sudoers entry through `visudo`, the keys) and `setup_timezone`, a post-install script accepted by a provider,  the full `provision` run (apt, sshd drop-in precedence and `sshd -T` checks on 24.04 with the provider's own `50-cloud-init.conf`, ufw activation, swap on the provider's file system, the `ss` listener check), cloud-init accepting the rendered file (including `gz+b64` and the `users` block replacing the default user), the checkout fetching a commit id from the server repository, coxia-server's `install.sh` end to end, and a real SSH runner (this repository defines the port and the fake; an adapter around `ssh` is the caller's). Open: how coxia-server is delivered while its repository is private, and whether the desktop should compare fingerprints with a provider-reported one.
