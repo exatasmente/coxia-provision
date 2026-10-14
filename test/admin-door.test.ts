@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, test } from 'node:test';
-import { AdminDoorError, connectAdminDoor } from '../src/adminDoor.ts';
+import { AdminDoorError, connectAdminDoor, reconnectingDoor } from '../src/adminDoor.ts';
 import { FakeWireError, startFakeDoor } from './admin-door-server.ts';
 import type { FakeDoor } from './admin-door-server.ts';
 
@@ -62,5 +62,16 @@ describe('admin door client', () => {
 
   test('no socket is a closed error', async () => {
     await assert.rejects(connectAdminDoor('/nonexistent/admin.sock'), (e: unknown) => e instanceof AdminDoorError && e.answered === false);
+  });
+
+  test('the reconnecting client connects again after the connection dropped', async () => {
+    door = await startFakeDoor();
+    door.handle('a:b', () => 'ok');
+    door.dropOn('a:b');
+    const c = reconnectingDoor(door.socketPath);
+    await assert.rejects(c.call('a:b'), (e: unknown) => e instanceof AdminDoorError && !e.answered);
+    assert.equal(await c.call('a:b'), 'ok');
+    assert.equal(c.workspace, 'principal');
+    c.close();
   });
 });

@@ -30,6 +30,8 @@ export class AdminDoorError extends Error {
 export interface CoreClient {
   /** The workspace the door belongs to, from the hello. */
   readonly workspace: string;
+  /** True once the connection is gone. */
+  readonly closed: boolean;
   call<T = unknown>(channel: string, args?: unknown[], opts?: { timeoutMs?: number }): Promise<T>;
   close(): void;
 }
@@ -77,6 +79,9 @@ export function connectAdminDoor(socketPath: string, opts: ConnectOptions = {}):
     const client: CoreClient = {
       get workspace() {
         return workspace ?? '';
+      },
+      get closed() {
+        return closed;
       },
       call: (channel, args = [], callOpts = {}) =>
         new Promise((resolve, reject) => {
@@ -150,4 +155,29 @@ export function connectAdminDoor(socketPath: string, opts: ConnectOptions = {}):
     socket.on('error', (e) => end(`the admin door connection failed: ${(e as NodeJS.ErrnoException).code ?? 'error'}`));
     socket.on('close', () => end('the admin door closed the connection'));
   });
+}
+
+/**
+ * A client that connects when first used and connects again when the connection is gone, so a move whose door dropped (the desktop restarted, the socket was replaced) can still
+ * ask for the workspace back. A call that was in flight when the connection broke is not retried: it fails with `answered: false`.
+ */
+export function reconnectingDoor(socketPath: string, opts: ConnectOptions = {}): CoreClient {
+  let current: CoreClient | undefined;
+  let workspace = '';
+  return {
+    get workspace() {
+      return workspace;
+    },
+    get closed() {
+      return false;
+    },
+    async call(channel, args, callOpts) {
+      if (!current || current.closed) {
+        current = await connectAdminDoor(socketPath, opts);
+        workspace = current.workspace;
+      }
+      return current.call(channel, args, callOpts);
+    },
+    close: () => current?.close(),
+  };
 }
