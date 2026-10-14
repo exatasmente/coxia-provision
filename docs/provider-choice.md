@@ -599,3 +599,15 @@ resize were not re-read in this pass, so check them against the spec before codi
 - Monitors: UptimeRobot v3 base URL and auth form and email-on-free detail;
   HetrixTools entirely (page blocked); Healthchecks.io commercial terms.
 - The 4 / 8 sizing is an estimate; no transcription benchmark was run.
+
+## Decision (2026-10-14)
+
+The person chose **Hostinger VPS, KVM 2** (2 vCPU / 8 GB / 100 GB) for the first adapter, on price, with the region in Brazil and Pix on the Brazilian site. The monitor is **Better Stack, free plan**.
+
+What that choice means for Coxia, from the findings above:
+
+- The adapter buys and sets up the machine by API, with the person's SSH key and the provisioning script as a post-install script (not cloud-init).
+- There is no destroy or resize by API: Coxia ends a server by turning auto-renewal off, and it ends at the close of its paid term. A bigger machine is a new purchase and a move.
+- Billing has no invoices API, so spend is recorded from the price of each subscription as estimated, not reconciled.
+- The plan is paid up front for its term; the budget is charged the upfront amount.
+- The CPU is throttled under sustained load, which the voice sidecar should be watched for.
