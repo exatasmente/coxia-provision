@@ -105,7 +105,7 @@ install_packages() {
 setup_admin() {
   [ -f "$ADMIN_KEYS_FILE" ] || return 0
   say "admin user $ADMIN_USER"
-  local line n=0 home keys
+  local line n=0 home keys group group_args
   local key_re='^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,3}( [[:print:]]*)?$'
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
@@ -114,22 +114,27 @@ setup_admin() {
   done < "$ADMIN_KEYS_FILE"
   [ "$n" -gt 0 ] || die "$ADMIN_KEYS_FILE holds no key"
   if ! id "$ADMIN_USER" >/dev/null 2>&1; then
-    useradd --create-home --shell /bin/bash --groups sudo "$ADMIN_USER"
+    # Ubuntu already has a group called `admin`: useradd would try to make a group of the same name and refuse, so an existing group
+    # of the user's name becomes its primary group.
+    group_args=(--user-group)
+    if getent group "$ADMIN_USER" >/dev/null 2>&1; then group_args=(--gid "$ADMIN_USER"); fi
+    useradd --create-home --shell /bin/bash "${group_args[@]}" --groups sudo "$ADMIN_USER"
     passwd -l "$ADMIN_USER" >/dev/null
   fi
+  group="$(id -gn "$ADMIN_USER")"
   write_file "$SUDOERS_DIR/90-coxia-admin" 0440 <<CONF
 $ADMIN_USER ALL=(ALL) NOPASSWD:ALL
 CONF
   visudo -cf "$SUDOERS_DIR/90-coxia-admin" >/dev/null || { rm -f "$SUDOERS_DIR/90-coxia-admin"; die "sudoers entry rejected by visudo"; }
   home="$(getent passwd "$ADMIN_USER" | cut -d: -f6)"
   keys="$home/.ssh/authorized_keys"
-  install -d -m 0700 -o "$ADMIN_USER" -g "$ADMIN_USER" "$home/.ssh"
-  [ -e "$keys" ] || install -m 0600 -o "$ADMIN_USER" -g "$ADMIN_USER" /dev/null "$keys"
+  install -d -m 0700 -o "$ADMIN_USER" -g "$group" "$home/.ssh"
+  [ -e "$keys" ] || install -m 0600 -o "$ADMIN_USER" -g "$group" /dev/null "$keys"
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
     grep -qxF -- "$line" "$keys" || printf '%s\n' "$line" >> "$keys"
   done < "$ADMIN_KEYS_FILE"
-  chown "$ADMIN_USER:$ADMIN_USER" "$keys"
+  chown "$ADMIN_USER:$group" "$keys"
   chmod 0600 "$keys"
 }
 
