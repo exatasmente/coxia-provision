@@ -14,6 +14,7 @@ coxia-provision move --provider hostinger --plan <plan id> --region <data center
 | `--token-file` | the provider token, a regular file readable by you only (0600); else the `HOSTINGER_API_TOKEN` variable. Read through a `SecretResolver`, never kept, never in a message |
 | `--admin-socket` | the core's admin door (or `COXIA_ADMIN_SOCKET`). The desktop opens it only when you switch it on in its own settings |
 | `--recovery-copy-file` | where the VPS master key is written (0600, must not exist). Without it the key is shown once on the terminal |
+| `--yes-deploy-key` | do not ask whether the VPS's deploy key was added to your repositories |
 | `--destroy-on-failure` | on failure end the machine through the guarded destroy. Default: keep it |
 | `--resume <id>` / `--abort <id>` | continue a move from its first unfinished step, or give the workspace back after a crash |
 
@@ -25,14 +26,15 @@ Every step is journaled and safe to run again.
 2. **keys.** An ed25519 pair for the admin user, made with `ssh-keygen` in the move's folder (0600). Only the public half goes to the provider.
 3. **buy.** `createServer` on the guarded provider (`accounts:assert`, `effects:request`/`effects:settle`, audit, redaction). The bootstrap is the post-install script (Hostinger) or cloud-init, with the admin key. A purchase refused by the gate stops here with nothing bought. A Hostinger purchase waiting for payment is waited for, then reported; finish it in the panel and resume.
 4. **provision.** Waits for the machine and runs `provisionMachine` over ssh without asking for the recovery copy, then verifies the host keys (below).
-5. **recovery-copy.** The VPS master key, once (`recovery-copy` of [provisioning](provisioning.md)), held in memory. It is the key the exported secrets are encrypted under.
-6. **step-down.** `ownership:move-out` with `to: vps:<provider>:<server id>`. From here the local instance is a client for good.
-7. **export.** `move:export` with the recovery copy as `targetKey` and a new folder in the move's folder as `out`; the bundle is tarred (`bundle.tar.gz`, the folder's contents at the top level).
-8. **copy-handover.** The recovery copy goes to the person, once: already in the `--recovery-copy-file`, or printed with a warning. If this run no longer holds it (a resume), the step is `skipped` and the summary says where it still is.
-9. **transfer.** `scp` of the tarball to `/home/<admin>/coxia-move-<id>.tar.gz`.
-10. **import.** `ssh ... sudo -n coxia-server import <tarball>`: clones, git identity, the core's `--import`, restart, health. The result line must name the workspace with `health: ok`. The tarball is deleted on the VPS whatever happened.
-11. **health.** `coxia-server status` and `coxia-server call <workspace> ownership:status` on the VPS: the role must be `owner`. That is the handover of ownership: the VPS acquires the workspace because the exported folder carries no lease.
-12. **finish.** The bundle and the tarball are removed from this computer. The CLI prints what the desktop's Instances screen needs: the ssh target, the workspace, the key file, the move's known_hosts file and the host key fingerprints (compare them with the provider's console), and the secrets that were not moved.
+5. **deploy-key.** `sudo -n coxia-server deploy-key` on the VPS creates (once, never overwritten) the ssh key the `coxia` user clones with, and prints its public line; anything that is not one `ssh-ed25519 ...` line is refused. The key is journaled (it is public), so a resume shows it again without running anything. If a repository of the workspace has an ssh remote (read with `config:get` on the admin door; if the config cannot be read, the move asks anyway), the CLI shows the key and the remotes and asks: **add it as a deploy key with write access on each repository, then answer yes**. A no (or no terminal) ends the move as `failed` here, before the step-down, so nothing is rolled back and the VPS is kept; resume once the key is added. `--yes-deploy-key` skips the question for scripted runs. It comes before the recovery copy so that waiting on you never spends the single handover.
+6. **recovery-copy.** The VPS master key, once (`recovery-copy` of [provisioning](provisioning.md)), held in memory. It is the key the exported secrets are encrypted under.
+7. **step-down.** `ownership:move-out` with `to: vps:<provider>:<server id>`. From here the local instance is a client for good.
+8. **export.** `move:export` with the recovery copy as `targetKey` and a new folder in the move's folder as `out`; the bundle is tarred (`bundle.tar.gz`, the folder's contents at the top level).
+9. **copy-handover.** The recovery copy goes to the person, once: already in the `--recovery-copy-file`, or printed with a warning. If this run no longer holds it (a resume), the step is `skipped` and the summary says where it still is.
+10. **transfer.** `scp` of the tarball to `/home/<admin>/coxia-move-<id>.tar.gz`.
+11. **import.** `ssh ... sudo -n coxia-server import <tarball>`: clones, git identity, the core's `--import`, restart, health. The result line must name the workspace with `health: ok`. The tarball is deleted on the VPS whatever happened.
+12. **health.** `coxia-server status` and `coxia-server call <workspace> ownership:status` on the VPS: the role must be `owner`. That is the handover of ownership: the VPS acquires the workspace because the exported folder carries no lease.
+13. **finish.** The bundle and the tarball are removed from this computer. The CLI prints what the desktop's Instances screen needs: the ssh target, the workspace, the key file, the move's known_hosts file and the host key fingerprints (compare them with the provider's console), and the secrets that were not moved.
 
 ## When something fails
 

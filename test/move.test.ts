@@ -45,7 +45,7 @@ describe('the move, happy path', () => {
     w = await makeWorld();
     const s = await runMove(w.deps, w.settings);
     const j = await loadJournal(w.deps, s.moveId);
-    assert.deepEqual(stepsDone(j), ['propose', 'keys', 'buy', 'provision', 'recovery-copy', 'step-down', 'export', 'copy-handover', 'transfer', 'import', 'health', 'finish']);
+    assert.deepEqual(stepsDone(j), ['propose', 'keys', 'buy', 'provision', 'deploy-key', 'recovery-copy', 'step-down', 'export', 'copy-handover', 'transfer', 'import', 'health', 'finish']);
     assert.deepEqual(w.door.calls.map((c) => c.channel).filter((c) => /ownership|move:|effects:settle/.test(c)), ['ownership:status', 'effects:settle', 'ownership:move-out', 'move:export']);
     assert.deepEqual(w.door.calls.find((c) => c.channel === 'ownership:move-out')?.args, [{ to: 'vps:fake:srv-1' }]);
     assert.deepEqual(w.exportedKeys, [w.masterKey]);
@@ -213,6 +213,76 @@ describe('a failure leaves the local instance the owner', () => {
     const f = await failure(runMove(w.deps, w.settings));
     assert.equal(f.message.includes(w.masterKey), false);
     assert.equal(everything(w).includes(w.masterKey), false);
+  });
+});
+
+describe('the deploy key', () => {
+  test('is asked for before the step-down, with the key and the remotes shown', async () => {
+    w = await makeWorld();
+    await runMove(w.deps, w.settings);
+    assert.equal(w.prompts.length, 1);
+    assert.match(w.prompts[0]!, /ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDeployKeyForTests/);
+    assert.match(w.prompts[0]!, /WRITE ACCESS/);
+    assert.match(w.prompts[0]!, /git@example\.com:group\/project\.git/);
+    const at = (c: string): number => w!.commands.findIndex((x) => x === c);
+    assert.ok(at('sudo -n coxia-server deploy-key') >= 0);
+    assert.equal(w.door.calls.findIndex((c) => c.channel === 'ownership:move-out') > w.door.calls.findIndex((c) => c.channel === 'config:get'), true);
+  });
+
+  test('a no stops before the step-down: no move-out, no claim, VPS kept; the resume shows the key again without running it', async () => {
+    w = await makeWorld();
+    w.confirmAnswer = false;
+    const f = await failure(runMove(w.deps, w.settings));
+    assert.equal(f.step, 'deploy-key');
+    assert.equal(w.moveOuts, 0);
+    assert.equal(w.claims, 0);
+    assert.equal(f.rolledBack, 'not-needed');
+    assert.equal(f.serverKept, true);
+    assert.equal((await loadJournal(w.deps, f.moveId)).deployKey?.startsWith('ssh-ed25519 '), true);
+    w.confirmAnswer = true;
+    await resumeMove(w.deps, w.settings, f.moveId);
+    assert.equal(w.commands.filter((c) => c === 'sudo -n coxia-server deploy-key').length, 1);
+    assert.equal(w.prompts.length, 2);
+    assert.match(w.prompts[1]!, /ssh-ed25519 AAAAC3/);
+  });
+
+  test('a finished step is skipped on resume', async () => {
+    w = await makeWorld();
+    w.failUpload(1);
+    const f = await failure(runMove(w.deps, w.settings));
+    await resumeMove(w.deps, { ...w.settings, recoveryCopyFile: undefined }, f.moveId).catch(() => undefined);
+    assert.equal(w.prompts.length, 1);
+    assert.equal(w.commands.filter((c) => c === 'sudo -n coxia-server deploy-key').length, 1);
+  });
+
+  test('no ssh remote: the key is made but nobody is asked; --yes-deploy-key skips the question', async () => {
+    w = await makeWorld();
+    w.repoRemotes = ['https://example.com/group/project.git'];
+    await runMove(w.deps, w.settings);
+    assert.equal(w.prompts.length, 0);
+    await w.close();
+    w = await makeWorld();
+    await runMove(w.deps, { ...w.settings, yesDeployKey: true });
+    assert.equal(w.prompts.length, 0);
+  });
+
+  test('a config that cannot be read means the person is asked anyway', async () => {
+    w = await makeWorld();
+    w.door.handle('config:get', () => {
+      throw new FakeWireError('internal', 'no');
+    });
+    await runMove(w.deps, w.settings);
+    assert.equal(w.prompts.length, 1);
+    assert.match(w.prompts[0]!, /could not be read/);
+  });
+
+  test('an answer that is not a public key line is refused before the step-down', async () => {
+    w = await makeWorld();
+    w.failCommand((c) => c === 'sudo -n coxia-server deploy-key', { exitCode: 0, stdout: `-----BEGIN ${'OPENSSH'} PRIVATE KEY-----\n`, stderr: '' });
+    const f = await failure(runMove(w.deps, w.settings));
+    assert.equal(f.step, 'deploy-key');
+    assert.match(f.message, /did not print an ssh-ed25519/);
+    assert.equal(w.moveOuts + w.claims, 0);
   });
 });
 

@@ -41,6 +41,10 @@ export interface World {
   trusts: string[];
   exportedKeys: string[];
   claims: number;
+  /** What the person answers to the deploy key question, and what was asked. */
+  confirmAnswer: boolean;
+  prompts: string[];
+  repoRemotes: string[];
   moveOuts: number;
   destroyRequests: number;
   /** Make a command fail: the first matching command gets this result once (or always with `always`). */
@@ -61,11 +65,12 @@ export async function makeWorld(opts: { recoveryCopyFile?: boolean; destroyOnFai
   const secrets = memorySecrets({ 'prov-token': token });
   const fake = createFakeProvider({ secrets, tokenRef: 'prov-token', token });
 
-  const w = { claims: 0, moveOuts: 0, destroyRequests: 0, machineHandedOver: false } as World;
+  const w = { confirmAnswer: true, prompts: [] as string[], repoRemotes: ['git@example.com:group/project.git'], claims: 0, moveOuts: 0, destroyRequests: 0, machineHandedOver: false } as World;
   Object.assign(w, { dir, movesDir, door, core, fake, masterKey, logs: [] as string[], presented: [] as string[], commands: [] as string[], uploads: [] as string[], trusts: [] as string[], exportedKeys: [] as string[], pinned: [{ type: 'ed25519', fingerprint: FP }] });
 
   let movedOut = false;
   door.handle('ownership:status', () => ({ role: 'owner', self: 'i1' }));
+  door.handle('config:get', () => ({ projects: { repos: w.repoRemotes.map((remoteUrl, i) => ({ id: `r${i}`, path: '/p', remoteUrl })) } }));
   door.handle('accounts:assert', () => ({ id: 'acct-1', provider: 'fake', secretRefs: ['prov-token'] }));
   door.handle('effects:request', ([a]) => {
     if ((a as { kind: string }).kind === 'destroy') w.destroyRequests++;
@@ -118,6 +123,7 @@ export async function makeWorld(opts: { recoveryCopyFile?: boolean; destroyOnFai
       w.machineHandedOver = true;
       return ok(`${masterKey}\n`);
     }
+    if (cmd === 'sudo -n coxia-server deploy-key') return ok('Deploy key of the coxia user:\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDeployKeyForTests coxia@vps\n');
     if (cmd.startsWith('sudo -n coxia-server import ')) return ok('{"imported":"principal","repos":[],"health":"ok"}\n');
     if (cmd === 'coxia-server status') return ok('running');
     if (cmd.startsWith('coxia-server call principal ownership:status')) return ok(JSON.stringify({ role: 'owner', self: 'i2' }, null, 2) + '\n');
@@ -163,6 +169,7 @@ export async function makeWorld(opts: { recoveryCopyFile?: boolean; destroyOnFai
     ensureKey: async () => ({ privateKeyFile: path.join(dir, 'k'), publicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTests coxia-test' }),
     pack: async (_folder, tarball) => void fs.writeFileSync(tarball, 'tar'),
     presentRecoveryCopy: async (key) => (w.presented.push(key), 'printed once on the terminal'),
+    confirm: async (p) => (w.prompts.push(p), w.confirmAnswer),
     movesDir,
     log: (l) => void w.logs.push(l),
     sleep: async () => undefined,

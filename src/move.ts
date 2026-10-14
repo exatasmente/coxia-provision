@@ -31,7 +31,7 @@ import { fetchRecoveryCopy, provisionMachine, RecoveryCopyRefusedError } from '.
 import { verifyPinnedHostKeys } from './ssh.ts';
 import type { AdminKey, MoveSsh, SshTarget } from './ssh.ts';
 
-export const MOVE_STEPS = ['propose', 'keys', 'buy', 'provision', 'recovery-copy', 'step-down', 'export', 'copy-handover', 'transfer', 'import', 'health', 'finish'] as const;
+export const MOVE_STEPS = ['propose', 'keys', 'buy', 'provision', 'deploy-key', 'recovery-copy', 'step-down', 'export', 'copy-handover', 'transfer', 'import', 'health', 'finish'] as const;
 export type MoveStep = (typeof MOVE_STEPS)[number];
 
 /** From here on the local instance has given the workspace up; a rollback resets them so a resumed move does them again. */
@@ -66,6 +66,8 @@ export interface Journal {
   hostKeysVerified: boolean;
   /** The path of the person's recovery-copy file, once this move wrote it. Never its contents. */
   recoveryCopyFile?: string;
+  /** The VPS's deploy key, a public key: kept so a resume shows it again without running anything. */
+  deployKey?: string;
   workspace?: string;
   exported?: { repos: number; files: number; bytes: number; secretsMoved: number; secretsNotMoved: { ref: string; type: string }[] };
   entries: JournalEntry[];
@@ -108,6 +110,8 @@ export interface MoveSettings {
   destroyOnFailure?: boolean;
   /** Where the person wants the recovery copy written (0600, must not exist). Absent: it is shown once on the terminal. */
   recoveryCopyFile?: string;
+  /** Skip the question about the deploy key (scripted runs): the person has added it already. */
+  yesDeployKey?: boolean;
   /** The contents of deploy/provision.sh at `serverRef`. */
   provisionScript: string;
 }
@@ -122,6 +126,8 @@ export interface MoveDeps {
   pack(folder: string, tarball: string): Promise<void>;
   /** Shows the recovery copy to the person, once, away from any log; says where it went. */
   presentRecoveryCopy(key: string): Promise<string>;
+  /** Shows a text to the person and waits for a yes or no. */
+  confirm(prompt: string): Promise<boolean>;
   /** Where moves are kept: `<state>/coxia-provision/moves`. */
   movesDir: string;
   /** Human progress lines. Scrubbed of the recovery copy before they get here. */
@@ -508,6 +514,25 @@ const STEPS: Record<MoveStep, (ctx: Context) => Promise<StepOut>> = {
     return { detail: j.recoveryCopyFile ? 'delivered; written to the recovery copy file' : 'delivered, held in memory only' };
   },
 
+  async 'deploy-key'(ctx) {
+    const { j, deps, settings } = ctx;
+    if (!j.deployKey) {
+      const r = await sshFor(ctx).run(['sudo', '-n', 'coxia-server', 'deploy-key']);
+      if (r.exitCode !== 0) throw new MoveError(`coxia-server deploy-key failed (exit ${r.exitCode}): ${r.stderr.trim().split('\n').slice(-2).join(' | ').slice(0, 300)}`);
+      const line = r.stdout.split('\n').map((l) => l.trim()).filter(Boolean).pop() ?? '';
+      if (!/^ssh-ed25519 [A-Za-z0-9+/]+={0,3}( [\x20-\x7e]*)?$/.test(line) || /PRIVATE KEY/.test(line)) throw new MoveError('coxia-server deploy-key did not print an ssh-ed25519 public key line');
+      j.deployKey = line;
+      await save(ctx);
+    }
+    const remotes = await sshRemotes(deps.core);
+    if (remotes && remotes.length === 0) return { detail: 'no repository of the workspace uses an ssh remote; the deploy key is not needed' };
+    const where = remotes ? remotes.map((u) => `  ${u}`).join('\n') : '  (the repositories of the workspace: the config could not be read)';
+    const prompt = `The VPS clones your repositories with its own key. Add this public key as a deploy key WITH WRITE ACCESS on each repository, on the code host:\n\n  ${j.deployKey}\n\n${where}\n\nThe workspace is not moved until you confirm. Added it?`;
+    if (settings.yesDeployKey) return { detail: 'deploy key shown; confirmation given with --yes-deploy-key' };
+    if (!(await deps.confirm(prompt))) throw new MoveError('the deploy key was not confirmed; nothing was moved and the VPS is kept. Resume once it is added.');
+    return { detail: 'deploy key confirmed by the person' };
+  },
+
   async 'step-down'(ctx) {
     await ctx.deps.core.call('ownership:move-out', [{ to: `vps:${ctx.j.provider}:${ctx.j.serverId}` }]);
     return { detail: `moved out to vps:${ctx.j.provider}:${ctx.j.serverId}` };
@@ -608,6 +633,18 @@ const STEPS: Record<MoveStep, (ctx: Context) => Promise<StepOut>> = {
     return { detail: 'bundle removed from this computer' };
   },
 };
+
+/** The ssh remotes of the workspace's repositories, read through the admin door; undefined when the config cannot be read (the person is then asked anyway). */
+async function sshRemotes(core: CoreClient): Promise<string[] | undefined> {
+  try {
+    const cfg = await core.call('config:get', []);
+    const root = isRec(cfg) && isRec(cfg.projects) ? cfg.projects : isRec(cfg) && isRec(cfg.config) && isRec(cfg.config.projects) ? cfg.config.projects : undefined;
+    if (!root || !Array.isArray(root.repos)) return undefined;
+    return root.repos.flatMap((r) => (isRec(r) && typeof r.remoteUrl === 'string' && /^(ssh:\/\/|[\w.-]+@[\w.-]+:)/.test(r.remoteUrl) ? [r.remoteUrl] : []));
+  } catch {
+    return undefined;
+  }
+}
 
 const remoteTarball = (j: Journal): string => `/home/${j.adminUser}/coxia-move-${j.id}.tar.gz`;
 

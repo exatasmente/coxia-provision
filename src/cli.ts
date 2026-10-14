@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import readline from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { reconnectingDoor } from './adminDoor.ts';
@@ -25,6 +26,7 @@ const USAGE = `usage: coxia-provision move --provider hostinger --plan <id> --re
   --token-file <file>        the provider API token, a file readable by you only (0600); or set HOSTINGER_API_TOKEN
   --admin-socket <path>      the admin door of the Coxia on this computer (or COXIA_ADMIN_SOCKET)
   --recovery-copy-file <f>   write the VPS master key (the recovery copy) to this new file, 0600, instead of showing it once
+  --yes-deploy-key           do not ask whether the VPS's deploy key was added to your repositories (scripted runs)
   --destroy-on-failure       on failure end the machine through the guarded destroy (default: keep it for a retry)
   --server-ref <ref>         the coxia-server ref to install; a full commit id is the most fixed choice
   --coxia-ref <tag>          the Coxia core release the server builds
@@ -110,6 +112,15 @@ async function realBuild(input: BuildInput): Promise<Built> {
       input.io.stdout(`\nRECOVERY COPY of the new machine's master key. It is shown once and kept nowhere. Put it in a password manager now.\nWithout it, the secrets moved to the machine cannot be recovered if the machine's own copy is lost.\n\n${key}\n\n`);
       return 'shown once on the terminal';
     },
+    confirm: async (prompt) => {
+      if (!process.stdin.isTTY) throw new UsageError('the deploy key needs a yes or no on a terminal: add the key, then run again with --yes-deploy-key');
+      const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+      try {
+        return /^y(es)?$/i.test((await rl.question(`\n${prompt} [y/N] `)).trim());
+      } finally {
+        rl.close();
+      }
+    },
     log: (line) => input.io.stderr(`${line}\n`),
   };
   return { deps, close: () => core.close() };
@@ -155,6 +166,7 @@ export async function main(argv: readonly string[], opts: { env?: NodeJS.Process
         'admin-socket': { type: 'string' },
         'recovery-copy-file': { type: 'string' },
         'destroy-on-failure': { type: 'boolean' },
+        'yes-deploy-key': { type: 'boolean' },
         resume: { type: 'string' },
         abort: { type: 'string' },
         help: { type: 'boolean', short: 'h' },
@@ -199,6 +211,7 @@ export async function main(argv: readonly string[], opts: { env?: NodeJS.Process
         ...(v.timezone ? { timezone: v.timezone } : {}),
         ...(v['admin-user'] ? { adminUser: v['admin-user'] } : {}),
         ...(v['destroy-on-failure'] ? { destroyOnFailure: true } : {}),
+        ...(v['yes-deploy-key'] ? { yesDeployKey: true } : {}),
         ...(v['recovery-copy-file'] ? { recoveryCopyFile: path.resolve(v['recovery-copy-file']) } : {}),
         provisionScript: await (opts.provisionScript ?? readProvisionScript)(),
       };
