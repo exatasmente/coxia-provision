@@ -43,5 +43,5 @@ jobs:
         run: npm test
 
       # The provisioning script cannot run on a CI machine; this catches the mistakes a reader would.
-      - name: Lint the provisioning script
-        run: shellcheck deploy/provision.sh
+      - name: Lint the shell scripts
+        run: shellcheck deploy/provision.sh install.sh scripts/stamp-release.sh

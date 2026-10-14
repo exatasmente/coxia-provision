@@ -65,6 +65,20 @@ test('provision does not run in sandbox mode, and an unknown command is a usage 
   assert.equal(b.run('nope').status, 2);
 });
 
+test('next-steps prints the fingerprints, how to pair and the single recovery copy, and never the key', () => {
+  const b = box();
+  const gen = spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', join(b.ssh, 'ssh_host_ed25519_key')]);
+  assert.equal(gen.status, 0);
+  const r = b.run('next-steps');
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /ed25519 SHA256:[A-Za-z0-9+/]{43}\n/);
+  assert.match(r.stdout, /coxia-server pair/);
+  assert.match(r.stdout, /sudo coxia-provision recovery-copy/);
+  assert.match(r.stdout, /ONCE/);
+  assert.ok(!r.stdout.includes(KEY));
+  assert.ok(!existsSync(b.marker), 'describing the copy does not spend it');
+});
+
 test('the script parses', () => {
   assert.equal(spawnSync('bash', ['-n', SCRIPT]).status, 0);
 });

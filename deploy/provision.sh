@@ -4,10 +4,12 @@
 # leaves the machine the same.
 #
 #   coxia-provision provision       firewall, ssh hardening, unattended upgrades, swap, coxia-server at its pinned ref + install.sh
+#   coxia-provision next-steps      the host key fingerprints and what to do next (pair a device, take the recovery copy)
 #   coxia-provision host-keys       the SHA256 fingerprints of the SSH host keys, one "<type> SHA256:<base64>" per line
 #   coxia-provision recovery-copy   prints the master key once, to standard output only, and records that it was handed over
 #
-# Settings come from /etc/coxia-provision.env (KEY=value lines written by cloud-init; no secrets, parsed, never sourced).
+# Settings come from /etc/coxia-provision.env (KEY=value lines written by cloud-init, a post-install script or install.sh; no secrets,
+# parsed, never sourced). When /etc/coxia-provision.admin-keys exists (public keys, one per line) the admin user is created from it.
 set -euo pipefail
 
 # --- paths -----------------------------------------------------------------------------------------------------------------------
@@ -15,6 +17,8 @@ ENV_FILE=/etc/coxia-provision.env
 STATE_DIR=/var/lib/coxia-provision        # root-only; outside the data folder and out of its backups
 KEY_FILE=/etc/coxia/master.key            # where coxia-server's install.sh keeps it (COXIA_MASTER_KEY_FILE)
 SSH_DIR=/etc/ssh
+ADMIN_KEYS_FILE=/etc/coxia-provision.admin-keys
+SUDOERS_DIR=/etc/sudoers.d
 SRC_ROOT=/opt/coxia-provision
 SERVER_SRC="$SRC_ROOT/coxia-server"
 
@@ -38,6 +42,9 @@ COXIA_VOICE_MODEL=""
 NODE_SHA256=""
 ADMIN_USER="admin"
 SWAP_MB=0
+TIMEZONE=""
+# 0 leaves sshd and the firewall to the person (install.sh --no-harden).
+HARDEN=1
 
 load_env() {
   [ -f "$ENV_FILE" ] || return 0
@@ -47,7 +54,7 @@ load_env() {
     key="${line%%=*}"
     value="${line#*=}"
     case "$key" in
-      COXIA_SERVER_REPO_URL | COXIA_SERVER_REF | COXIA_REF | COXIA_VOICE_MODEL | NODE_SHA256 | ADMIN_USER | SWAP_MB)
+      COXIA_SERVER_REPO_URL | COXIA_SERVER_REF | COXIA_REF | COXIA_VOICE_MODEL | NODE_SHA256 | ADMIN_USER | SWAP_MB | TIMEZONE | HARDEN)
         printf -v "$key" '%s' "$value" ;;
       *) die "unknown setting $key in $ENV_FILE" ;;
     esac
@@ -61,6 +68,8 @@ validate_settings() {
   [[ "$COXIA_SERVER_REPO_URL" =~ ^https://[A-Za-z0-9._~:/@%+-]+$ ]] || die "COXIA_SERVER_REPO_URL must be an https URL"
   [[ "$ADMIN_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "ADMIN_USER is not a valid user name"
   [[ "$SWAP_MB" =~ ^[0-9]{1,6}$ ]] || die "SWAP_MB must be a number of megabytes"
+  [[ "$HARDEN" =~ ^[01]$ ]] || die "HARDEN must be 0 or 1"
+  if [ -n "$TIMEZONE" ]; then [[ "$TIMEZONE" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}$ ]] || die "TIMEZONE is not an IANA name"; fi
   if [ -n "$COXIA_REF" ]; then [[ "$COXIA_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$ ]] || die "COXIA_REF is not a plain ref"; fi
   if [ -n "$COXIA_VOICE_MODEL" ]; then [[ "$COXIA_VOICE_MODEL" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "COXIA_VOICE_MODEL is not a plain name"; fi
   if [ -n "$NODE_SHA256" ]; then [[ "$NODE_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "NODE_SHA256 is not 64 hex digits"; fi
@@ -87,6 +96,53 @@ install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends ca-certificates curl git openssl openssh-server ufw unattended-upgrades iproute2
+}
+
+# --- admin user ------------------------------------------------------------------------------------------------------------------
+# cloud-init makes the user itself; install.sh and the post-install script hand the keys over in $ADMIN_KEYS_FILE and this step does
+# the same: a user with no password, sudo without one (the key is the credential), the keys in authorized_keys. Keys are only added,
+# never removed, so a second run changes nothing and a key the person added by hand survives.
+setup_admin() {
+  [ -f "$ADMIN_KEYS_FILE" ] || return 0
+  say "admin user $ADMIN_USER"
+  local line n=0 home keys group group_args
+  local key_re='^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,3}( [[:print:]]*)?$'
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    [[ "$line" =~ $key_re ]] || die "$ADMIN_KEYS_FILE has a line that is not a single OpenSSH public key"
+    n=$((n + 1))
+  done < "$ADMIN_KEYS_FILE"
+  [ "$n" -gt 0 ] || die "$ADMIN_KEYS_FILE holds no key"
+  if ! id "$ADMIN_USER" >/dev/null 2>&1; then
+    # Ubuntu already has a group called `admin`: useradd would try to make a group of the same name and refuse, so an existing group
+    # of the user's name becomes its primary group.
+    group_args=(--user-group)
+    if getent group "$ADMIN_USER" >/dev/null 2>&1; then group_args=(--gid "$ADMIN_USER"); fi
+    useradd --create-home --shell /bin/bash "${group_args[@]}" --groups sudo "$ADMIN_USER"
+    passwd -l "$ADMIN_USER" >/dev/null
+  fi
+  group="$(id -gn "$ADMIN_USER")"
+  write_file "$SUDOERS_DIR/90-coxia-admin" 0440 <<CONF
+$ADMIN_USER ALL=(ALL) NOPASSWD:ALL
+CONF
+  visudo -cf "$SUDOERS_DIR/90-coxia-admin" >/dev/null || { rm -f "$SUDOERS_DIR/90-coxia-admin"; die "sudoers entry rejected by visudo"; }
+  home="$(getent passwd "$ADMIN_USER" | cut -d: -f6)"
+  keys="$home/.ssh/authorized_keys"
+  install -d -m 0700 -o "$ADMIN_USER" -g "$group" "$home/.ssh"
+  [ -e "$keys" ] || install -m 0600 -o "$ADMIN_USER" -g "$group" /dev/null "$keys"
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    grep -qxF -- "$line" "$keys" || printf '%s\n' "$line" >> "$keys"
+  done < "$ADMIN_KEYS_FILE"
+  chown "$ADMIN_USER:$group" "$keys"
+  chmod 0600 "$keys"
+}
+
+# --- timezone --------------------------------------------------------------------------------------------------------------------
+setup_timezone() {
+  [ -n "$TIMEZONE" ] || return 0
+  say "timezone $TIMEZONE"
+  [ "$(timedatectl show -p Timezone --value)" = "$TIMEZONE" ] || timedatectl set-timezone "$TIMEZONE"
 }
 
 # --- ssh -------------------------------------------------------------------------------------------------------------------------
@@ -211,7 +267,9 @@ check_listeners() {
   say "listeners"
   local bad
   bad="$(ss -H -ltn | awk '{print $4}' | grep -Ev '^(127\.|\[::1\]:|\[::ffff:127\.)' | grep -Ev ':22$' || true)"
-  [ -z "$bad" ] || die "listening beyond loopback and ssh: $bad"
+  if [ -z "$bad" ]; then return 0; fi
+  if [ "$HARDEN" = 1 ]; then die "listening beyond loopback and ssh: $bad"; fi
+  echo "warning: listening beyond loopback and ssh: $bad" >&2
 }
 
 # --- host keys -------------------------------------------------------------------------------------------------------------------
@@ -249,6 +307,27 @@ recovery_copy() {
   printf '%s\n' "$key"
 }
 
+# --- what to do next -------------------------------------------------------------------------------------------------------------
+# Printed by install.sh and the post-install script when provisioning ends. The recovery copy is described and never printed here.
+next_steps() {
+  say "SSH host keys (compare them with what ssh shows on your first connection)"
+  print_host_keys
+  cat <<TXT
+
+==> next steps
+  Pair a device (a pairing code and the tunnel to reach the instance, as $ADMIN_USER):
+      coxia-server pair [workspace]
+  Take the one recovery copy of the master key. It works ONCE: the key is printed once, nothing keeps a copy
+  for you, and a lost transfer is lost. Run it in your own terminal and store the output in a password manager:
+      sudo coxia-provision recovery-copy
+TXT
+  if [ "$HARDEN" = 1 ]; then
+    echo "  Root can no longer log in over ssh; use: ssh $ADMIN_USER@<this machine>"
+  else
+    echo "  Hardening was skipped: sshd and the firewall are yours to manage."
+  fi
+}
+
 # --- main ------------------------------------------------------------------------------------------------------------------------
 provision() {
   [ "$SANDBOX" != 1 ] || die "provision does not run in sandbox mode"
@@ -259,8 +338,14 @@ provision() {
   if [ "${ID:-}" != ubuntu ] || [ "${VERSION_ID:-}" != 24.04 ]; then echo "warning: written for Ubuntu 24.04, this is ${PRETTY_NAME:-unknown}" >&2; fi
   install -d -m 0700 "$STATE_DIR"
   install_packages
-  harden_ssh
-  setup_firewall
+  setup_admin
+  setup_timezone
+  if [ "$HARDEN" = 1 ]; then
+    harden_ssh
+    setup_firewall
+  else
+    echo "warning: HARDEN=0, sshd and the firewall are left as they are" >&2
+  fi
   setup_upgrades
   setup_swap
   checkout_server
@@ -279,6 +364,7 @@ SERVER_COMMIT=""
 case "${1:-}" in
   provision) provision ;;
   host-keys) print_host_keys ;;
+  next-steps) load_env; next_steps ;;
   recovery-copy) recovery_copy ;;
-  *) echo "usage: coxia-provision provision | host-keys | recovery-copy" >&2; exit 2 ;;
+  *) echo "usage: coxia-provision provision | next-steps | host-keys | recovery-copy" >&2; exit 2 ;;
 esac
