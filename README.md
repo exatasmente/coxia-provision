@@ -50,11 +50,11 @@ A provider's post-install hook or cloud-init can run the same steps without `cur
 
 ## Status
 
-Becoming public with the 1.0 release (the one-line install needs it public), so everything here is
-written as if it were public already: no company, person, host,
-real issue number or secret in code, tests, docs, commit messages or branch names.
-`node scripts/public-audit.mjs` enforces that in CI. The script is a copy of the
-one in the Coxia repository; keep them in sync.
+Public, working towards the Coxia 1.0 release; the one-line install fetches this repository anonymously.
+Until a release tag exists, point `--ref` at a branch and expect the "not pinned" warning. The repository
+carries no company, person, host, real issue number or secret in code, tests, docs, commit messages or
+branch names: `node scripts/public-audit.mjs` enforces that in CI. The script is a copy of the one in the
+Coxia repository; keep them in sync.
 
 ## How it fits
 
