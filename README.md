@@ -10,6 +10,8 @@ real issue number or secret in code, tests, docs, commit messages or branch name
 `node scripts/public-audit.mjs` enforces that in CI. The script is a copy of the
 one in the Coxia repository; keep them in sync.
 
+The research behind the first provider and uptime monitor is in [docs/provider-choice.md](docs/provider-choice.md).
+
 ## How it fits
 
 The Coxia core and its client contract live in the public repository
