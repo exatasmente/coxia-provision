@@ -64,18 +64,18 @@ For the monitor:
 Prices are monthly, 730 h, before tax, for the closest 4 vCPU / 8 GB plan, in the
 Sao Paulo region where one exists.
 
-| | Akamai / Linode | Magalu Cloud | Vultr | Hetzner Cloud | DigitalOcean | AWS Lightsail | Oracle Cloud | Hostinger VPS |
-|---|---|---|---|---|---|---|---|---|
-| South America region | `br-gru` Sao Paulo (verified) | `br-se1` Sudeste and `br-ne1` Nordeste, both in Brazil (verified) | `sao` Sao Paulo and `scl` Santiago (verified) | None (verified) | None in South America (verified); nearest NYC, ATL, TOR; latency to Brazil **unmeasured** | Sao Paulo `sa-east-1` (verified, announced 2026-06-12) | Sao Paulo and Vinhedo (second-hand; unverified on Oracle's own region page) | Brazil listed for VPS on the support page (verified there; the older page text and the 2022 launch post agree). The data-center list in the API needs a token, so availability at checkout is **unverified**. Location is fixed after setup |
-| Target size and price | `g6-standard-4`, 4 vCPU shared, 8 GB, 160 GB: **US$ 67.20** in `br-gru` (US$ 48.00 elsewhere); dedicated `g6-dedicated-4` US$ 100.80 | `BV` 4 vCPU shared / 8 GB / 40 GB: **R$ 169.99**; `DP` dedicated 4 / 8 / 40: R$ 563.00 (prices valid 2026-10-02, taxes included) | `vhp-4c-8gb-amd` 4 / 8 / 180 GB: list price **US$ 48.00**; `vc2-4c-8gb` US$ 40.00; Sao Paulo price **unverified** (a third-party tracker shows about US$ 72) | n/a in South America. For reference, 4 vCPU / 8 GB is the CPX32 class at roughly EUR 35 (secondary sources disagree; unverified) | `s-4vcpu-8gb` basic **US$ 48.00**, 4 vCPU shared, 8 GB, 160 GB (no Sao Paulo); 2 vCPU / 4 GB US$ 24.00; General Purpose (dedicated) 2 vCPU / 8 GB US$ 63.00, 4 / 16 US$ 126.00; Premium Intel and AMD Basic prices **unverified** (third-party listings show US$ 32 and US$ 28 for 2 / 4) | No 4 vCPU at 8 GB. 2 vCPU / 8 GB is US$ 44; 4 vCPU / 16 GB is US$ 84 (as listed; Sao Paulo price unverified) | E4 flex: 2 OCPU (= 4 vCPU) + 8 GB = about **US$ 45** by the public price list, plus boot volume; regional price unverified | No 4 / 8 plan. KVM 2: 2 vCPU / 8 GB / 100 GB NVMe, promo **R$ 43,99** or US$ 8.99 per month, renewal R$ 77,99 or US$ 14.99. KVM 4: 4 vCPU / 16 GB / 200 GB, promo R$ 59,99 or US$ 12.99, renewal R$ 149,99 or US$ 28.99. Paid in full up front; price per term **unverified** (see notes) |
-| Create with SSH key and cloud-init | `POST /v4/linode/instances`, `authorized_keys` and `metadata.user_data` (base64 cloud-config), needs the Metadata capability (listed for `br-gru`) | `POST /v1/instances`, `ssh_key_name`, `user_data` (base64) | `POST /v2/instances`, `sshkey_id`, `user_data` (base64); from Vultr's public docs, not re-read from the API reference (blocked) | `POST /v1/servers`, `ssh_keys`, `user_data` (cloud-init, 32 KiB) | `POST /v2/droplets`, `ssh_keys`, `user_data` | `CreateInstances`, `keyPairName`, `userData` (a launch script; cloud-init not named in the official page) | Yes via instance metadata `user_data` and `ssh_authorized_keys`; unverified in this pass | `POST /api/vps/v1/virtual-machines` buys and sets up in one call: `item_id`, `setup.public_key` `{name, key}`, `setup.post_install_script_id` (a shell script, 48 KB, not cloud-init). `202` means payment pending and setup must be finished in the panel |
-| Resize | `POST .../resize` (cold, disk must fit) | `POST .../retype` (cold; disk can only grow) | Plan upgrade through the instance update; upgrade only; unverified in detail | `change_type` (server off; disk can only grow) | `resize` action (disk resize is one-way) | No in-place resize: snapshot, then create a bigger instance | Shape change on the instance; unverified in detail | None in the API (spec 1.64.0). `recreate` reinstalls and wipes the VM |
-| Billing API | `GET /v4/account`, `/account/invoices`, `/account/payments`, `/account/transfer`; `balance_uninvoiced` is the live estimate | Consumption API in FOCUS v1.0, daily, D-1; price-list API | `GET /v2/billing/history`, `/billing/pending-charges`, `/billing/invoices/{id}`, `GET /v2/account` (second-hand search summary) | **None** in the API spec (verified); usage is in the console, invoices at the account site | `GET /v2/customers/my/balance`, `/billing_history`, `/invoices`, `/billing/{urn}/insights/{start}/{end}` (verified) | Through AWS Cost Explorer and Budgets, account level, not per Lightsail | Usage API and Budgets API (unverified detail) | `GET /api/billing/v1/catalog`, `/subscriptions`, `/payment-methods`, `POST /orders`; no invoice, usage or balance endpoint. Adding a payment method is panel only |
-| Spending cap or alert | No cap. No billing alert found (unverified). | None found in docs (unverified) | Account limits: maximum instances and maximum instance cost, raised on request (verified in docs); no alert found | Console cost alerts by email; "a convenience feature rather than a spending limit" (verified); API for them not found | Spend alerts by email at percentage thresholds, per product or team (verified); no cap; no API for them found (unverified) | AWS Budgets alerts and actions; no hard cap (unverified) | Budgets with actual and forecast email alerts, "soft limits" (verified); no cap | None found (unverified) |
-| Payment from Brazil | Cards (Visa, Mastercard, Amex, UnionPay), Google Pay, PayPal; wire by support; no Pix or boleto found | Credit card is required to activate (Visa, Mastercard, Elo; **international cards not accepted**); Pix and boleto on request through support; prices and invoices in BRL | Cards, PayPal, crypto, Alipay, UnionPay; no Pix or boleto found | Not confirmed in this pass (unverified); no Pix or boleto found | Cards, PayPal, Google Pay, Apple Pay, bank account, crypto wallet; no Pix or boleto (billing page does not mention them) | Cards; Pix only as a fallback for Brazil-entity customers whose card payment failed (verified) | Not confirmed (unverified) | Pix on the Brazilian site only, **no automatic renewal** with Pix; card installments up to 12x; boleto for paying Hostinger not confirmed; whether Pix works for a VPS order is unconfirmed |
-| Partner or reseller API | Parent and child accounts: `GET /v4/account/child-accounts`, `POST .../token` (proxy user token) (verified) | None found (unverified) | Not found in this pass (unverified) | None found | Not found in this pass (unverified) | AWS Organizations can create accounts by program; not examined (unverified) | Not examined | None found |
-| Destroy by API | `DELETE /v4/linode/instances/{id}` | `DELETE` on the instance | Instance delete (second-hand) | `DELETE /servers/{id}` | `DELETE /v2/droplets/{id}` | `DeleteInstance` | Terminate (unverified) | **No endpoint.** Only auto-renewal off (`DELETE .../auto-renewal/disable`); the subscription then runs to `expires_at`. A cancel request schema exists in the spec with no route (unverified) |
-| CPU model | Shared (dedicated at US$ 100.80) | Shared `BV`, dedicated `DP` | Shared or high-performance | Shared | Basic is shared ("bursty"); General Purpose is dedicated | Burstable | Flex shapes | **Credit-based throttling** (notes) |
+| | Akamai / Linode | Magalu Cloud | Vultr | Hetzner Cloud | DigitalOcean | AWS Lightsail | Oracle Cloud | Hostinger VPS | Oracle Always Free |
+|---|---|---|---|---|---|---|---|---|---|
+| South America region | `br-gru` Sao Paulo (verified) | `br-se1` Sudeste and `br-ne1` Nordeste, both in Brazil (verified) | `sao` Sao Paulo and `scl` Santiago (verified) | None (verified) | None in South America (verified); nearest NYC, ATL, TOR; latency to Brazil **unmeasured** | Sao Paulo `sa-east-1` (verified, announced 2026-06-12) | Sao Paulo and Vinhedo (second-hand; unverified on Oracle's own region page) | Brazil listed for VPS on the support page (verified there; the older page text and the 2022 launch post agree). The data-center list in the API needs a token, so availability at checkout is **unverified**. Location is fixed after setup | `sa-saopaulo-1` (GRU) and `sa-vinhedo-1` (VCP), one availability domain each (verified, regions page). Whether either can be picked as the home region at sign-up is **unverified** |
+| Target size and price | `g6-standard-4`, 4 vCPU shared, 8 GB, 160 GB: **US$ 67.20** in `br-gru` (US$ 48.00 elsewhere); dedicated `g6-dedicated-4` US$ 100.80 | `BV` 4 vCPU shared / 8 GB / 40 GB: **R$ 169.99**; `DP` dedicated 4 / 8 / 40: R$ 563.00 (prices valid 2026-10-02, taxes included) | `vhp-4c-8gb-amd` 4 / 8 / 180 GB: list price **US$ 48.00**; `vc2-4c-8gb` US$ 40.00; Sao Paulo price **unverified** (a third-party tracker shows about US$ 72) | n/a in South America. For reference, 4 vCPU / 8 GB is the CPX32 class at roughly EUR 35 (secondary sources disagree; unverified) | `s-4vcpu-8gb` basic **US$ 48.00**, 4 vCPU shared, 8 GB, 160 GB (no Sao Paulo); 2 vCPU / 4 GB US$ 24.00; General Purpose (dedicated) 2 vCPU / 8 GB US$ 63.00, 4 / 16 US$ 126.00; Premium Intel and AMD Basic prices **unverified** (third-party listings show US$ 32 and US$ 28 for 2 / 4) | No 4 vCPU at 8 GB. 2 vCPU / 8 GB is US$ 44; 4 vCPU / 16 GB is US$ 84 (as listed; Sao Paulo price unverified) | E4 flex: 2 OCPU (= 4 vCPU) + 8 GB = about **US$ 45** by the public price list, plus boot volume; regional price unverified | No 4 / 8 plan. KVM 2: 2 vCPU / 8 GB / 100 GB NVMe, promo **R$ 43,99** or US$ 8.99 per month, renewal R$ 77,99 or US$ 14.99. KVM 4: 4 vCPU / 16 GB / 200 GB, promo R$ 59,99 or US$ 12.99, renewal R$ 149,99 or US$ 28.99. Paid in full up front; price per term **unverified** (see notes) | **US$ 0**, but not 4 / 8: A1 Flex is 1,500 OCPU-hours and 9,000 GB-hours per month, "2 OCPUs and 12 GB" in total, plus 200 GB of boot and block volume (verified). Beyond it: A1 at US$ 0.01 per OCPU-hour and US$ 0.0015 per GB-hour (price list) |
+| Create with SSH key and cloud-init | `POST /v4/linode/instances`, `authorized_keys` and `metadata.user_data` (base64 cloud-config), needs the Metadata capability (listed for `br-gru`) | `POST /v1/instances`, `ssh_key_name`, `user_data` (base64) | `POST /v2/instances`, `sshkey_id`, `user_data` (base64); from Vultr's public docs, not re-read from the API reference (blocked) | `POST /v1/servers`, `ssh_keys`, `user_data` (cloud-init, 32 KiB) | `POST /v2/droplets`, `ssh_keys`, `user_data` | `CreateInstances`, `keyPairName`, `userData` (a launch script; cloud-init not named in the official page) | Yes via instance metadata `user_data` and `ssh_authorized_keys`; unverified in this pass | `POST /api/vps/v1/virtual-machines` buys and sets up in one call: `item_id`, `setup.public_key` `{name, key}`, `setup.post_install_script_id` (a shell script, 48 KB, not cloud-init). `202` means payment pending and setup must be finished in the panel | `POST /20160918/instances`; `metadata.ssh_authorized_keys` and `metadata.user_data` (base64 cloud-init); `metadata` plus `extendedMetadata` at most 32,000 bytes (SDK source). Needs a VCN, subnet, image OCID and availability domain first |
+| Resize | `POST .../resize` (cold, disk must fit) | `POST .../retype` (cold; disk can only grow) | Plan upgrade through the instance update; upgrade only; unverified in detail | `change_type` (server off; disk can only grow) | `resize` action (disk resize is one-way) | No in-place resize: snapshot, then create a bigger instance | Shape change on the instance; unverified in detail | None in the API (spec 1.64.0). `recreate` reinstalls and wipes the VM | `UpdateInstance` changes shape and OCPUs; a running instance is rebooted; `VM.Standard.A1.Flex` is editable, the AMD micro is not (verified). The `shapeConfig` body was not read |
+| Billing API | `GET /v4/account`, `/account/invoices`, `/account/payments`, `/account/transfer`; `balance_uninvoiced` is the live estimate | Consumption API in FOCUS v1.0, daily, D-1; price-list API | `GET /v2/billing/history`, `/billing/pending-charges`, `/billing/invoices/{id}`, `GET /v2/account` (second-hand search summary) | **None** in the API spec (verified); usage is in the console, invoices at the account site | `GET /v2/customers/my/balance`, `/billing_history`, `/invoices`, `/billing/{urn}/insights/{start}/{end}` (verified) | Through AWS Cost Explorer and Budgets, account level, not per Lightsail | Usage API and Budgets API (unverified detail) | `GET /api/billing/v1/catalog`, `/subscriptions`, `/payment-methods`, `POST /orders`; no invoice, usage or balance endpoint. Adding a payment method is panel only | Usage API `POST https://usageapi.<region>.oci.oraclecloud.com/20200107/usage` (`computedAmount` as cost; hourly, daily, monthly); daily cost-report CSVs in Object Storage (verified) |
+| Spending cap or alert | No cap. No billing alert found (unverified). | None found in docs (unverified) | Account limits: maximum instances and maximum instance cost, raised on request (verified in docs); no alert found | Console cost alerts by email; "a convenience feature rather than a spending limit" (verified); API for them not found | Spend alerts by email at percentage thresholds, per product or team (verified); no cap; no API for them found (unverified) | AWS Budgets alerts and actions; no hard cap (unverified) | Budgets with actual and forecast email alerts, "soft limits" (verified); no cap | None found (unverified) | Budgets: soft limit, email alerts on actual or forecast spend, evaluated every 24 h, no cap (verified). A create model exists in the Go SDK, so an API exists; the REST path was not read |
+| Payment from Brazil | Cards (Visa, Mastercard, Amex, UnionPay), Google Pay, PayPal; wire by support; no Pix or boleto found | Credit card is required to activate (Visa, Mastercard, Elo; **international cards not accepted**); Pix and boleto on request through support; prices and invoices in BRL | Cards, PayPal, crypto, Alipay, UnionPay; no Pix or boleto found | Not confirmed in this pass (unverified); no Pix or boleto found | Cards, PayPal, Google Pay, Apple Pay, bank account, crypto wallet; no Pix or boleto (billing page does not mention them) | Cards; Pix only as a fallback for Brazil-entity customers whose card payment failed (verified) | Not confirmed (unverified) | Pix on the Brazilian site only, **no automatic renewal** with Pix; card installments up to 12x; boleto for paying Hostinger not confirmed; whether Pix works for a VPS order is unconfirmed | Card verification with a small temporary hold that is removed; CPF asked for Brazil; debit card with a major logo and no PIN accepted (verified). Upgrade authorizes US$ 100 or the local equivalent, reversed at once. Pix, boleto and BRL billing of the account **unverified** (a BRL price list exists) |
+| Partner or reseller API | Parent and child accounts: `GET /v4/account/child-accounts`, `POST .../token` (proxy user token) (verified) | None found (unverified) | Not found in this pass (unverified) | None found | Not found in this pass (unverified) | AWS Organizations can create accounts by program; not examined (unverified) | Not examined | None found | Not examined |
+| Destroy by API | `DELETE /v4/linode/instances/{id}` | `DELETE` on the instance | Instance delete (second-hand) | `DELETE /servers/{id}` | `DELETE /v2/droplets/{id}` | `DeleteInstance` | Terminate (unverified) | **No endpoint.** Only auto-renewal off (`DELETE .../auto-renewal/disable`); the subscription then runs to `expires_at`. A cancel request schema exists in the spec with no route (unverified) | `DELETE /20160918/instances/{id}?preserveBootVolume=false`; the default is `false`, so the boot volume goes with it unless kept (SDK source) |
+| CPU model | Shared (dedicated at US$ 100.80) | Shared `BV`, dedicated `DP` | Shared or high-performance | Shared | Basic is shared ("bursty"); General Purpose is dedicated | Burstable | Flex shapes | **Credit-based throttling** (notes) | Ampere Arm (aarch64), fixed OCPUs on a flex shape; OCPU to vCPU mapping not re-read |
 
 ### Per-option notes
 
@@ -344,20 +344,33 @@ and its CPU model is a risk for faster-whisper.
 
 #### Oracle Cloud
 
+Paid compute (the E4 flex line) is cheap on paper; the free tier is covered in its own
+section below.
+
 - Public price list API (`apexapps.oracle.com/.../cetools/api/v1/products/`,
   updated 2026-10-08): E4 flex OCPU US$ 0.025 per hour, memory US$ 0.0015 per GB
   per hour. 2 OCPU (4 vCPU) and 8 GB is about US$ 45 per month before storage.
-- Budgets are "soft limits" with email alerts on actual or forecast spend and an
-  API; evaluated about every 24 hours. No cap.
-- The Always Free Ampere allowance was reported cut from 4 OCPU / 24 GB to 2 OCPU /
-  12 GB in June 2026 (secondary report; Oracle's own page still showed the old
-  figure). Not relevant to the paid target but a reason to distrust the free tier.
-- Unverified: region identifiers on Oracle's own pages, payment methods for
-  Brazil, and the API signing scheme (request signing with a key pair is heavier
-  than a bearer token).
+  The same list carries BRL prices (E4 OCPU R$ 0.1308925 per hour).
+- Budgets are "soft limits" with email alerts on actual or forecast spend,
+  evaluated every 24 hours. No cap. They are created in the root compartment and
+  need the `usage-budgets` policy. The Go SDK has a create model
+  (`CreateBudgetDetails`: `compartmentId`, `amount`, `resetPeriod`, `targetType`,
+  `targets`), so budgets can be created by API; the REST path was not read.
+- Usage API: a signed `POST` to
+  `https://usageapi.<region>.oci.oraclecloud.com/20200107/usage`
+  (`RequestSummarizedUsages`), `computedAmount` is cost when `currency` is in
+  `groupBy`; hourly (36 h window), daily (90 days) and monthly (12 months).
+- Request signing is heavier than a bearer token; see the Always Free section.
 - Sources: <https://docs.oracle.com/en-us/iaas/Content/Billing/Concepts/budgetsoverview.htm>,
-  <https://docs.oracle.com/en-us/iaas/Content/Billing/Tasks/create-alert-rule.htm>
-  (2026-10-13).
+  <https://docs.oracle.com/en-us/iaas/Content/Billing/Concepts/costanalysisoverview.htm>,
+  <https://raw.githubusercontent.com/oracle/oci-go-sdk/master/budget/create_budget_details.go>
+  (2026-10-14); price list (2026-10-13 and 2026-10-14).
+
+#### Oracle Always Free
+
+Described in full in "Free option: Oracle Always Free" below. In one line: it costs
+nothing, but it is 2 OCPU / 12 GB, not 4 vCPU / 8 GB, and idle instances can be
+reclaimed.
 
 ## Uptime monitors compared
 
@@ -558,6 +571,224 @@ resize were not re-read in this pass, so check them against the spec before codi
 - **Region facts to re-check at runtime:** `GET /regions` must still list
   `br-gru` with the Metadata capability; else fail closed.
 
+## Free option: Oracle Always Free
+
+Read on **2026-10-14**. Nothing was created; no account was opened. This is an
+option the person can try by hand today. It is **not** the first adapter.
+
+### What it gives
+
+Compute and storage, from Oracle's "Always Free Resources" page:
+
+- **Ampere A1 Flex (`VM.Standard.A1.Flex`, aarch64):** "the first 1,500 OCPU hours and
+  9,000 GB hours per month", which "for Always Free tenancies ... is equivalent to
+  2 OCPUs and 12 GB of memory". One instance with all of it, or up to two instances of
+  1 OCPU each. Memory and OCPUs are split freely inside the total. 1,500 OCPU-hours
+  covers 2 OCPUs for a 730 h month (1,460 h); 9,000 GB-hours covers 12 GB (8,760 h).
+  The same page and the Free Tier page both state the 2 / 12 figure.
+- **AMD micro (`VM.Standard.E2.1.Micro`):** up to two, 1/8 OCPU (burstable), 1 GB, 50 Mbps
+  to the internet. Too small for Coxia; cannot be resized.
+- **Storage:** 200 GB total of boot plus block volume, five volume backups, in the home
+  region. The page gives the minimum boot volume as 47 GB in one place and 50 GB in
+  another (contradiction, check in the console).
+- **Egress:** 10 TB per month. Outbound TCP port 25 is blocked by default.
+- **Images:** Ubuntu 24.04 LTS has an Arm build (standard Ubuntu image; the Minimal
+  image is not for Arm shapes), listed on the platform images page. Whether that image
+  is flagged Always Free-eligible was not confirmed.
+- **Trial:** a new account also gets US$ 300 of credit for up to 30 days. Paid resources
+  made with it are reclaimed afterwards unless the account is upgraded; Always Free
+  resources stay.
+
+**This does not reach the 4 vCPU / 8 GB target.** The A1 allowance was cut from
+4 OCPU / 24 GB to 2 OCPU / 12 GB in 2026. Secondary reports date it to 2026-06-15 (one
+Japanese source says 2026-08-18) and say Oracle announced nothing; Oracle's own pages now
+state 2 / 12. Whether an A1 OCPU equals one vCPU (Ampere has no SMT) was not re-read on
+Oracle's Arm page, so assume 2 OCPU is 2 vCPU. That makes the free machine a
+**2 vCPU / 12 GB** one: more RAM than the 2 / 4 floor and than Hostinger KVM 2 on paper,
+the same core count as KVM 2, half the cores of the target. It fits `small` and
+probably `medium` (int8) with a slow runner; it is not measured.
+
+Paid beyond the free allowance, from the price list: A1 OCPU US$ 0.01 per hour, memory
+US$ 0.0015 per GB-hour, block volume US$ 0.0255 per GB-month above 200 GB. If the free
+1,500 / 9,000 allowance is applied to a Pay As You Go tenancy ("All tenancies get the
+first ..."), a 4 OCPU / 8 GB A1 would cost about (2,920 - 1,500) x 0.01 = **US$ 14.20
+per month** (memory is inside the allowance). This is a calculation from list prices, not
+a quote, and the reading of "all tenancies" is **unverified**.
+
+### Regions
+
+- Brazil has `sa-saopaulo-1` (Brazil East, key GRU) and `sa-vinhedo-1` (Brazil Southeast,
+  key VCP), both in the commercial realm with **one availability domain each**.
+- Always Free compute and block volume must be created **in the home region**; outside
+  it they are billed. The home region is chosen at sign-up and "you can't change it".
+  Trial, free tier and Pay As You Go tenancies can subscribe to **one** region only.
+- **Not verified:** that either Brazilian region is selectable as the home region, and
+  that A1 exists in it. No Oracle page listing home-region choices was found.
+  If neither is offered, the home region would be elsewhere (US or Chile are the
+  geographic neighbours; unchecked) and the latency question of the DigitalOcean case
+  applies. Check the sign-up form before anything else.
+- **Capacity:** Oracle says an "out of host capacity" error "indicates a temporary lack
+  of Always Free shapes in your home region" and suggests another availability domain,
+  waiting, or upgrading to a paid account. Brazil has one AD, so the AD retry does not
+  exist. How common it is could not be measured: an Oracle Community thread reports a
+  Free Tier user unable to upgrade to Pay As You Go because of A1 capacity shortage in
+  `sa-saopaulo-1` for three days (no answer seen); a Brazilian TabNews post shows the same
+  error. Treat it as common and unpredictable, not as measured.
+
+### Idle reclamation
+
+Oracle's rule (Always Free Resources page): Oracle may reclaim an Always Free instance
+that, **during a 7-day period**, has all of:
+
+- CPU utilization at the 95th percentile **below 20 percent**;
+- network utilization **below 20 percent**;
+- memory utilization **below 20 percent** (A1 shapes only).
+
+The percentages were 10 and then 15 in 2023 (third-party account), so they move.
+
+- **Does Pay As You Go remove it?** The page does not say. It says Oracle does not charge
+  for Always Free resources after an upgrade and only for usage above the limits. A 2023
+  Oracle email, quoted by third parties, said converting to Pay As You Go keeps idle
+  instances from being stopped as long as usage stays within the free limits. That is
+  second-hand and three years old: **unverified today**.
+- **Cost of Pay As You Go inside the free limits:** no charge by Oracle's statement. The
+  upgrade authorizes US$ 100 (or the local equivalent) on the card, reversed at once;
+  the bank decides how long the reversal takes.
+- **Why this matters for Coxia:** a personal Coxia that sits idle most of the week is
+  exactly what the rule describes. Memory under 20 percent of 12 GB (2.4 GB) is likely
+  with only the core running. Expect reclamation unless the account is upgraded.
+
+### Sign-up from Brazil
+
+- Oracle's sign-up guide: a card is required for verification; "you might see a small,
+  temporary charge ... a verification hold that will be removed automatically", and the
+  card is not charged unless the account is upgraded. Brazil asks for the CPF.
+- Debit cards with a major logo that do not require a PIN are accepted. Virtual,
+  single-use and prepaid cards are reported refused by a low-reliability source.
+- The guide is dated 2024-02-13 on the page found; screens may have changed.
+- **BRL billing and Pix or boleto were not confirmed.** A BRL price list exists, which
+  suggests Brazilian accounts can be billed in reais, but no billing page said so.
+
+### Risks
+
+1. **Reclamation** of an idle instance (above).
+2. **Capacity:** the instance may not be created, or may not be created again after
+   deletion, because the home region has no Always Free A1 host. One AD in Brazil.
+3. **The allowance moved once without notice.** Oracle can cut it again; the tenancy
+   rule is that an account over the limit gets its A1 instances disabled and deleted
+   after 30 days unless it is upgraded.
+4. **Size:** 2 vCPU. Builds and transcription run at half the target's cores.
+5. **ARM** (below): works for the main pieces, but the Coxia installer has not been run on
+   aarch64, and the voice sidecar on Ampere is unmeasured.
+6. **One region, forever:** the home region cannot be changed.
+
+### ARM fit
+
+Facts from this pass; no Coxia code was run on aarch64.
+
+- **Node:** the Node distribution index (2026-10-14) lists v26.11.1 (2026-10-07) with a
+  `linux-arm64` build. v26 has no LTS yet; the latest LTS in the index is v24.21.0.
+  Electron is not involved in the headless build, so the Electron arm64 question does
+  not arise (no Electron-on-A1 issue was looked for beyond that).
+- **bubblewrap:** the Ubuntu package page returned HTTP 503 and the Launchpad API
+  call returned nothing, so the arm64 package for 24.04 is **unverified**. `bubblewrap`
+  is in Ubuntu's main archive for all architectures as far as is known; install it with
+  apt and test `bwrap --unshare-all` on the real VM, since the kernel may restrict
+  unprivileged user namespaces.
+- **Python voice sidecar:** PyPI (2026-10-14) shows `ctranslate2` 4.8.3 with
+  `manylinux_2_27_aarch64` wheels for cp39 to cp314 (uploaded 2026-10-13); `onnxruntime`
+  1.31.0 has a cp312 `manylinux_2_28_aarch64` wheel; `av` 19.0.1 has a cp312 aarch64
+  wheel; `faster-whisper` 1.2.1 is pure Python and requires `ctranslate2>=4.0`.
+  Ubuntu 24.04 ships Python 3.12, so the wheels install without compiling.
+- **Performance:** the CTranslate2 hardware page lists "AArch64/ARM64 processors" as
+  supported for the prebuilt binaries, and says nothing about int8 or which backend runs
+  there. **No faster-whisper or CTranslate2 benchmark on Ampere was found.** A
+  real-time-factor measurement of `small` and `medium` on a 2 OCPU A1 is needed before
+  trusting it.
+- **Other:** no known problem was found for Electron-free Node apps on A1; the search
+  was thin, so this is absence of evidence.
+
+### How to use it now, without an adapter
+
+1. Open the account, choose the home region in the sign-up form (prefer a Brazilian one
+   if offered; the choice is permanent), add the card.
+2. In the console, create a VCN with internet connectivity, a public subnet, and a
+   security list that allows the SSH and web ports Coxia needs.
+3. Create an instance: shape `VM.Standard.A1.Flex`, 2 OCPU, 12 GB, the Ubuntu 24.04 image
+   for Arm, a 50 GB boot volume, your SSH public key. If "out of host capacity" appears,
+   retry later; there is no second AD in Brazil.
+4. Run the one-line installer over SSH (`curl | sudo bash`, Ubuntu 24.04). It is meant to
+   work on a hand-made VM; on aarch64 it has not been tried, so read its output.
+5. Watch the instance's CPU, network and memory for the first week against the idle
+   rule, and decide whether to upgrade to Pay As You Go.
+6. Set a budget alert in the console (root compartment) so an accidental paid resource
+   is noticed within a day.
+
+### What an OCI adapter would need
+
+Adapter facts, same style as the sections above. Fields and paths come from Oracle's
+docs and SDK sources read on 2026-10-14; check the API reference before coding.
+
+- **Base URL:** per region, `https://iaas.<region>.oraclecloud.com/20160918` for compute;
+  `https://usageapi.<region>.oci.oraclecloud.com/20200107` for usage.
+- **Auth:** signed requests, no bearer token. The person creates an API key pair in the
+  console; Coxia needs the tenancy OCID, user OCID, key fingerprint, the private key
+  (RSA, PEM) and the region. Store them with the secrets; never log.
+- **Signing (Signature Version 1):**
+  `Authorization: Signature version="1",keyId="<tenancy>/<user>/<fingerprint>",
+  algorithm="rsa-sha256",headers="...",signature="<base64>"`. For GET and DELETE sign
+  `(request-target) host date`. For POST and PUT also sign `x-content-sha256` (base64
+  SHA-256 of the body, sent even if the body is empty), `content-type` and
+  `content-length`. Lines are `name: value`, lowercase names, joined by newlines.
+  A clock more than 5 minutes off gives `401`. Query parameters must keep their order.
+  Missing signed headers give `401`.
+- **Effort of signing without the SDK:** small. `node:crypto` has `createSign
+  ('RSA-SHA256')` and `createHash('sha256')`; the whole signer is roughly 60 to 80 lines
+  and can be unit-tested against Oracle's published example. The fingerprint is the MD5
+  of the DER public key, which `crypto` also gives. What is not small is the setup
+  around it (OCIDs, key upload, network below). PATCH is not covered by the signing
+  page; treat it like POST.
+- **Prerequisites the adapter must create or find:** a compartment, a VCN, an internet
+  gateway, a route table, a security list, a public subnet, the Ubuntu 24.04 Arm image
+  OCID for the region (`ListImages`), and the availability domain name. A droplet needs
+  none of this. This is the largest adapter cost.
+- **Create:** `POST /instances` with `compartmentId`, `availabilityDomain`, `shape:
+  "VM.Standard.A1.Flex"`, `shapeConfig {ocpus, memoryInGBs}`, `sourceDetails {sourceType:
+  "image", imageId, bootVolumeSizeInGBs}`, `createVnicDetails {subnetId,
+  assignPublicIp}`, `metadata {ssh_authorized_keys: <key>, user_data: <base64
+  cloud-init>}`. `metadata` plus `extendedMetadata` must stay at or under 32,000 bytes.
+  `user_data` is real cloud-init. Tag every instance (`freeformTags`).
+- **List and get:** `GET /instances?compartmentId=...`, `GET /instances/{id}`; filter by
+  the tag on the client. Poll `lifecycleState`.
+- **Capacity error:** "out of host capacity" comes back as a 500 `InternalError`
+  (third-party reports), not a `429`. The adapter must treat it as "not now", back off
+  and say so, never loop fast.
+- **Update:** `UpdateInstance` for shape and `shapeConfig`. A running instance is
+  rebooted. The A1 flex is editable; the AMD micro is not. IPs and volume attachments
+  stay. A shape change needs limits for the new shape, else the instance keeps the old
+  one.
+- **Terminate:** `DELETE /instances/{id}` with `preserveBootVolume` (default `false`) and
+  `preserveDataVolumesCreatedAtLaunch` (default `true`). With the defaults the boot volume
+  is deleted and launch-time data volumes **stay** and are billed outside the 200 GB. If
+  the boot volume is preserved it keeps counting toward the 200 GB and may be charged
+  above it. Whether a terminated instance lingers in `ListInstances` as `TERMINATED` for
+  a while was not read.
+- **"Server holds data" detection:** boot volume, volume attachments, backups.
+- **Billing:** Usage API `RequestSummarizedUsages` (permission `USAGE_ANALYSIS_READ` or
+  `USAGE_REPORT_READ`); Always Free usage shows as zero cost. Per-instance cost comes from
+  the price list.
+- **Spend alert:** Budgets with email alerts on actual or forecast spend, evaluated every
+  24 hours, soft limits only; created by API (SDK model exists, REST path not read);
+  budgets live in the root compartment.
+- **Rate limits:** no published number on the service-limits page. `429
+  TooManyRequests` exists in the error reference and is retryable with backoff. A
+  third-party page quotes about 20 requests per second for compute reads and 10 for
+  writes and says there is no `Retry-After` header; unofficial.
+- **Region facts to re-check at runtime:** the home region, that `VM.Standard.A1.Flex` is
+  listed in `ListShapes` for the AD, and that the image supports Arm. Else fail closed.
+- **Always Free guard:** the adapter must keep the total A1 usage at or under 2 OCPU and
+  12 GB, or tell the person the instance will be charged.
+
 ## Open questions for the person
 
 1. Do you have a Brazilian credit card and want BRL, a Brazilian invoice and
@@ -595,7 +826,14 @@ resize were not re-read in this pass, so check them against the spec before codi
 - Linode: any billing alert; partner eligibility terms; Pix or boleto.
 - Magalu Cloud: Consumption API paths, rate limits, spend alerts, partner API.
 - Lightsail: Sao Paulo prices; cloud-init specifics; partner route.
-- Oracle: regions on Oracle's own pages, payment methods for Brazil, API detail.
+- Oracle (paid line): payment methods and BRL billing for Brazil, create and `shapeConfig`
+  request bodies, rate limits (no official figure), partner API.
+- Oracle Always Free: whether `sa-saopaulo-1` or `sa-vinhedo-1` can be the home region and
+  has A1; how often A1 capacity errors happen in Brazil; whether Pay As You Go removes
+  idle reclamation today; whether the free A1 allowance applies inside a Pay As You Go
+  tenancy; Pix or boleto; the OCPU to vCPU mapping; the Ubuntu 24.04 Arm image's
+  Always Free flag; bubblewrap on 24.04 arm64; any faster-whisper timing on Ampere; the
+  budget REST path; what a terminated instance shows in the list.
 - Monitors: UptimeRobot v3 base URL and auth form and email-on-free detail;
   HetrixTools entirely (page blocked); Healthchecks.io commercial terms.
 - The 4 / 8 sizing is an estimate; no transcription benchmark was run.
@@ -611,3 +849,5 @@ What that choice means for Coxia, from the findings above:
 - Billing has no invoices API, so spend is recorded from the price of each subscription as estimated, not reconciled.
 - The plan is paid up front for its term; the budget is charged the upfront amount.
 - The CPU is throttled under sustained load, which the voice sidecar should be watched for.
+
+Oracle Always Free is the free alternative the person can try by hand (2 vCPU / 12 GB in a Brazilian home region if one is offered, with the idle-reclamation and capacity risks above). A second adapter for it is a possible follow-up, not part of this decision.
