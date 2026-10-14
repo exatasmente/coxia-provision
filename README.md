@@ -48,6 +48,10 @@ A provider's post-install hook or cloud-init can run the same steps without `cur
 `renderPostInstallScript()` in [`src/bootstrap.ts`](src/bootstrap.ts) and `renderCloudInit()` in
 [`src/cloudInit.ts`](src/cloudInit.ts) embed `deploy/provision.sh` and write the same settings.
 
+## Move a running Coxia to a VPS
+
+`coxia-provision move` buys a VPS within the budget (the purchase waits for your yes), provisions it, moves one workspace there with its secrets re-encrypted under the VPS key, checks it and prints what the desktop needs; any failure leaves the local instance the owner. See [docs/move.md](docs/move.md).
+
 ## Status
 
 Public, working towards the Coxia 1.0 release; the one-line install fetches this repository anonymously.
